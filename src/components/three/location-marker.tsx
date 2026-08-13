@@ -2,11 +2,15 @@
 
 import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
+import { DoubleSide } from "three";
 import type { Group, Mesh } from "three";
+
+const BEAM_HEIGHT = 2.4;
 
 export function LocationMarker({ position }: { position: [number, number, number] }) {
   const pinRef = useRef<Group>(null);
   const ringRef = useRef<Mesh>(null);
+  const beamRef = useRef<Mesh>(null);
 
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
@@ -19,10 +23,19 @@ export function LocationMarker({ position }: { position: [number, number, number
       const material = ringRef.current.material as { opacity: number };
       material.opacity = 0.55 + Math.sin(t * 2.5) * 0.2;
     }
+    if (beamRef.current) {
+      const material = beamRef.current.material as { opacity: number };
+      material.opacity = 0.16 + Math.sin(t * 1.8) * 0.06;
+    }
   });
 
   return (
     <group>
+      {/* Glowing beam so the "found it" location reads instantly from any camera angle. */}
+      <mesh ref={beamRef} position={[position[0], position[1] + BEAM_HEIGHT / 2, position[2]]}>
+        <cylinderGeometry args={[0.12, 0.22, BEAM_HEIGHT, 24, 1, true]} />
+        <meshBasicMaterial color="#f5b942" transparent opacity={0.2} depthWrite={false} side={DoubleSide} />
+      </mesh>
       <mesh ref={ringRef} position={[position[0], position[1] + 0.02, position[2]]} rotation={[-Math.PI / 2, 0, 0]}>
         <ringGeometry args={[0.35, 0.5, 32]} />
         <meshBasicMaterial color="#f5b942" transparent opacity={0.6} />

@@ -1,13 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
+import type { Mesh, MeshStandardMaterial, PointLight } from "three";
 import { getFurnitureRecipe } from "@/lib/three/furniture-recipes";
 import { getIcon } from "@/lib/icon-map";
 import { categoryIcon } from "@/lib/constants";
 import type { SceneItemSummary } from "@/lib/home-scene-data";
 
 const MAX_TOOLTIP_ITEMS = 5;
+const GLOW_COLOR = "#f5b942";
 
 export function FurnitureMesh({
   name,
@@ -32,6 +35,21 @@ export function FurnitureMesh({
     () => Math.max(0.4, ...recipe.parts.map((p) => p.position[1] + p.size[1] / 2)),
     [recipe]
   );
+  const materialRefs = useRef<Mesh[]>([]);
+  const glowLightRef = useRef<PointLight>(null);
+
+  useFrame(({ clock }) => {
+    if (!highlighted) return;
+    const pulse = 0.3 + Math.sin(clock.getElapsedTime() * 2.4) * 0.15;
+    for (const mesh of materialRefs.current) {
+      if (!mesh) continue;
+      const material = mesh.material as MeshStandardMaterial;
+      material.emissiveIntensity = pulse;
+    }
+    if (glowLightRef.current) {
+      glowLightRef.current.intensity = 0.6 + pulse * 0.8;
+    }
+  });
 
   return (
     <group
@@ -53,17 +71,29 @@ export function FurnitureMesh({
       scale={hovered && onClick ? 1.04 : 1}
     >
       {recipe.parts.map((part, i) => (
-        <mesh key={i} position={part.position} castShadow receiveShadow>
+        <mesh
+          key={i}
+          position={part.position}
+          castShadow
+          receiveShadow
+          ref={(mesh) => {
+            if (mesh) materialRefs.current[i] = mesh;
+          }}
+        >
           <boxGeometry args={part.size} />
           <meshStandardMaterial
             color={part.color}
             roughness={part.roughness ?? 0.55}
             metalness={part.metalness ?? 0.08}
-            emissive={highlighted ? "#f5b942" : "#000000"}
-            emissiveIntensity={highlighted ? 0.35 : 0}
+            emissive={highlighted ? GLOW_COLOR : "#000000"}
+            emissiveIntensity={highlighted ? 0.3 : 0}
           />
         </mesh>
       ))}
+
+      {highlighted && (
+        <pointLight ref={glowLightRef} position={[0, topY * 0.6, 0]} color={GLOW_COLOR} intensity={0.8} distance={2.2} decay={2} />
+      )}
 
       {hovered && (
         <Html position={[0, topY + 0.25, 0]} center distanceFactor={9} occlude={false}>
