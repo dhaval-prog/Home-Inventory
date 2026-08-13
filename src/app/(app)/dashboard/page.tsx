@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Sparkles, Eye, Plus, Search, Settings2, Home as HomeIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { getDashboardData } from "@/lib/dashboard-data";
+import { getHomeSceneData } from "@/lib/home-scene-data";
 import { getIcon } from "@/lib/icon-map";
 import { HOME_TYPE_META } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,9 @@ import { LocationPath } from "@/components/shared/location-path";
 import { relativeDay } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SeedDemoButton } from "@/components/shared/seed-demo-button";
+import { DashboardHomeScene } from "@/components/home/dashboard-home-scene";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { ItemPreviewContent } from "@/components/items/item-preview-content";
 
 function greeting() {
   const hour = new Date().getHours();
@@ -26,6 +30,13 @@ export default async function DashboardPage() {
   } = await supabase.auth.getUser();
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user!.id).maybeSingle();
   const data = await getDashboardData(supabase);
+  const sceneDataByHome = Object.fromEntries(
+    (
+      await Promise.all(
+        data.homes.map(async ({ home }) => [home.id, await getHomeSceneData(supabase, home.id)] as const)
+      )
+    ).filter(([, scene]) => scene !== null)
+  );
 
   const name = profile?.name || user?.email?.split("@")[0] || "there";
 
@@ -80,6 +91,13 @@ export default async function DashboardPage() {
                     </span>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {roomCount > 0 && sceneDataByHome[home.id] && (
+                      <DashboardHomeScene
+                        rooms={sceneDataByHome[home.id]!.rooms}
+                        furnitureByRoom={sceneDataByHome[home.id]!.furnitureByRoom}
+                        itemsByFurniture={sceneDataByHome[home.id]!.itemsByFurniture}
+                      />
+                    )}
                     <div className="grid grid-cols-3 gap-2 rounded-lg bg-muted/60 p-3 text-center">
                       <Stat label="Rooms" value={roomCount} />
                       <Stat label="Furniture" value={furnitureCount} />
@@ -151,18 +169,27 @@ export default async function DashboardPage() {
                   <ul className="divide-y">
                     {data.recentItems.map(({ item, path }) => (
                       <li key={item.id}>
-                        <Link
-                          href={`/items/${item.id}`}
-                          className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0 hover:opacity-80"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-medium">{item.name}</span>
-                            <span className="shrink-0 text-xs text-muted-foreground">
-                              {relativeDay(item.created_at)}
-                            </span>
-                          </div>
-                          <LocationPath nodes={path} container={item.container} />
-                        </Link>
+                        <HoverCard>
+                          <HoverCardTrigger
+                            render={
+                              <Link
+                                href={`/items/${item.id}`}
+                                className="flex flex-col gap-1 py-3 first:pt-0 last:pb-0 hover:opacity-80"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-medium">{item.name}</span>
+                                  <span className="shrink-0 text-xs text-muted-foreground">
+                                    {relativeDay(item.created_at)}
+                                  </span>
+                                </div>
+                                <LocationPath nodes={path} container={item.container} />
+                              </Link>
+                            }
+                          />
+                          <HoverCardContent>
+                            <ItemPreviewContent item={item} path={path} />
+                          </HoverCardContent>
+                        </HoverCard>
                       </li>
                     ))}
                   </ul>

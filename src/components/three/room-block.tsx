@@ -8,10 +8,12 @@ import { roomFloorColor, ROOM_WALL_COLOR } from "@/lib/three/room-colors";
 import { WALL_HEIGHT, WALL_THICKNESS, placeFurniture } from "@/lib/three/layout";
 import { getIcon } from "@/lib/icon-map";
 import type { Furniture, Room } from "@/lib/supabase/types";
+import type { SceneItemSummary } from "@/lib/home-scene-data";
 
 export function RoomBlock({
   room,
   furniture,
+  itemsByFurniture,
   x,
   z,
   width,
@@ -22,6 +24,7 @@ export function RoomBlock({
 }: {
   room: Room;
   furniture: Furniture[];
+  itemsByFurniture?: Record<string, SceneItemSummary[]>;
   x: number;
   z: number;
   width: number;
@@ -35,6 +38,7 @@ export function RoomBlock({
   const RoomIcon = getIcon(room.icon);
   const floorColor = roomFloorColor(room.type);
   const highlighted = placed.find((p) => p.furniture.id === highlightFurnitureId);
+  const roomItemCount = furniture.reduce((sum, f) => sum + (itemsByFurniture?.[f.id]?.length ?? 0), 0);
 
   return (
     <group position={[x, 0, z]}>
@@ -74,11 +78,13 @@ export function RoomBlock({
       {placed.map(({ furniture: f, x: fx, z: fz, rotationY }) => (
         <FurnitureMesh
           key={f.id}
+          name={f.name}
           type={f.type}
           position={[fx, 0, fz]}
           rotationY={rotationY}
           onClick={onFurnitureClick ? () => onFurnitureClick(f.id) : undefined}
           highlighted={f.id === highlightFurnitureId}
+          items={itemsByFurniture?.[f.id]}
         />
       ))}
 
@@ -90,6 +96,14 @@ export function RoomBlock({
           {room.name}
         </div>
       </Html>
+
+      {hovered && (
+        <Html position={[0, 0.05, depth / 2 - 0.3]} center distanceFactor={9} occlude={false}>
+          <div className="pointer-events-none whitespace-nowrap rounded-full bg-background/90 px-2.5 py-1 text-[11px] font-medium text-muted-foreground shadow-md ring-1 ring-border">
+            {furniture.length} furniture · {roomItemCount} items
+          </div>
+        </Html>
+      )}
     </group>
   );
 }

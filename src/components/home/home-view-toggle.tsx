@@ -1,15 +1,23 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Box, LayoutGrid } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HomeSceneBoundary } from "@/components/three/home-scene-boundary";
+import { useFurnitureNavigation } from "@/lib/three/use-furniture-navigation";
 import { RoomCard } from "@/components/home/room-card";
 import type { RoomWithFurniture } from "@/lib/home-data";
+import type { SceneItemSummary } from "@/lib/home-scene-data";
 
-export function HomeViewToggle({ homeId, rooms }: { homeId: string; rooms: RoomWithFurniture[] }) {
-  const router = useRouter();
+export function HomeViewToggle({
+  homeId,
+  rooms,
+  itemsByFurniture,
+}: {
+  homeId: string;
+  rooms: RoomWithFurniture[];
+  itemsByFurniture?: Record<string, SceneItemSummary[]>;
+}) {
   const [view, setView] = useState<"3d" | "list">("3d");
 
   const furnitureByRoom = useMemo(() => {
@@ -18,11 +26,7 @@ export function HomeViewToggle({ homeId, rooms }: { homeId: string; rooms: RoomW
     return map;
   }, [rooms]);
 
-  const furnitureRoomMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const r of rooms) for (const f of r.furniture) map[f.id] = r.room.id;
-    return map;
-  }, [rooms]);
+  const { onRoomClick, onFurnitureClick } = useFurnitureNavigation(furnitureByRoom);
 
   return (
     <div className="space-y-4">
@@ -59,11 +63,9 @@ export function HomeViewToggle({ homeId, rooms }: { homeId: string; rooms: RoomW
           className="h-[60vh] min-h-[420px] w-full overflow-hidden rounded-2xl border bg-muted/20"
           rooms={rooms.map((r) => r.room)}
           furnitureByRoom={furnitureByRoom}
-          onRoomClick={(roomId) => router.push(`/home/rooms/${roomId}`)}
-          onFurnitureClick={(furnitureId) => {
-            const roomId = furnitureRoomMap[furnitureId];
-            if (roomId) router.push(`/home/rooms/${roomId}/furniture/${furnitureId}`);
-          }}
+          itemsByFurniture={itemsByFurniture}
+          onRoomClick={onRoomClick}
+          onFurnitureClick={onFurnitureClick}
         />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

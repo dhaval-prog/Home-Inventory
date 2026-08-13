@@ -6,10 +6,12 @@ import { OrbitControls } from "@react-three/drei";
 import { RoomBlock } from "@/components/three/room-block";
 import { computeRoomLayout, layoutBounds } from "@/lib/three/layout";
 import type { Furniture, Room } from "@/lib/supabase/types";
+import type { SceneItemSummary } from "@/lib/home-scene-data";
 
 export interface HomeScene3DProps {
   rooms: Room[];
   furnitureByRoom: Record<string, Furniture[]>;
+  itemsByFurniture?: Record<string, SceneItemSummary[]>;
   onRoomClick?: (roomId: string) => void;
   onFurnitureClick?: (furnitureId: string) => void;
   focusRoomId?: string;
@@ -20,6 +22,7 @@ export interface HomeScene3DProps {
 function SceneContents({
   rooms,
   furnitureByRoom,
+  itemsByFurniture,
   onRoomClick,
   onFurnitureClick,
   focusRoomId,
@@ -63,6 +66,7 @@ function SceneContents({
           key={room.id}
           room={room}
           furniture={furnitureByRoom[room.id] ?? []}
+          itemsByFurniture={itemsByFurniture}
           x={x}
           z={z}
           width={width}

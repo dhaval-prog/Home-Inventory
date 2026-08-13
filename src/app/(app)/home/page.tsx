@@ -2,10 +2,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getHomeViewData } from "@/lib/home-data";
+import { getHomeSceneData } from "@/lib/home-scene-data";
 import { HOME_TYPE_META } from "@/lib/constants";
 import { Badge } from "@/components/ui/badge";
 import { HomeViewToggle } from "@/components/home/home-view-toggle";
 import { AddRoomDialog } from "@/components/home/add-room-dialog";
+import { DeleteHomeDialog } from "@/components/home/delete-home-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
@@ -27,7 +29,10 @@ export default async function HomePage({
   }
 
   const homeId = id && homes.some((h) => h.id === id) ? id : homes[0].id;
-  const data = await getHomeViewData(supabase, homeId);
+  const [data, sceneData] = await Promise.all([
+    getHomeViewData(supabase, homeId),
+    getHomeSceneData(supabase, homeId),
+  ]);
   if (!data) redirect("/home/new");
 
   const { home, rooms } = data!;
@@ -62,6 +67,7 @@ export default async function HomePage({
             </Button>
           </Link>
           <AddRoomDialog homeId={homeId} />
+          {homes.length > 1 && <DeleteHomeDialog homeId={homeId} homeName={home.name} roomCount={rooms.length} />}
         </div>
       </div>
 
@@ -73,7 +79,7 @@ export default async function HomePage({
           action={<AddRoomDialog homeId={homeId} />}
         />
       ) : (
-        <HomeViewToggle homeId={homeId} rooms={rooms} />
+        <HomeViewToggle homeId={homeId} rooms={rooms} itemsByFurniture={sceneData?.itemsByFurniture} />
       )}
     </div>
   );
