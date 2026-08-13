@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { LocationPicker } from "@/components/items/location-picker";
-import { ITEM_CATEGORIES, SUGGESTED_TAGS } from "@/lib/constants";
+import { ITEM_CATEGORIES, SUGGESTED_TAGS, categoryLabel } from "@/lib/constants";
 import type { Item } from "@/lib/supabase/types";
 import type { ItemFormState } from "@/lib/actions/items";
 import { cn } from "@/lib/utils";
@@ -93,7 +93,7 @@ export function ItemForm({
           <Label>Category</Label>
           <Select name="category" defaultValue={item?.category ?? "other"}>
             <SelectTrigger className="w-full">
-              <SelectValue />
+              <SelectValue>{(v) => categoryLabel(v)}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {ITEM_CATEGORIES.map((c) => (

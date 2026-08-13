@@ -80,7 +80,7 @@ export function QuickAddNavigator({
             }}
           >
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a home" />
+              <SelectValue>{(v) => homes.find((h) => h.id === v)?.name ?? "Select a home"}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {homes.map((h) => (
@@ -103,7 +103,7 @@ export function QuickAddNavigator({
             }}
           >
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a room" />
+              <SelectValue>{(v) => rooms.find((r) => r.id === v)?.name ?? "Select a room"}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {rooms.map((r) => (
@@ -120,7 +120,7 @@ export function QuickAddNavigator({
             <Label>Furniture</Label>
             <Select value={furnitureId} disabled={!roomId} onValueChange={(v) => setFurnitureId(v ?? "")}>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select furniture" />
+                <SelectValue>{(v) => furniture.find((f) => f.id === v)?.name ?? "Select furniture"}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {furniture.map((f) => (

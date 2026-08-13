@@ -21,7 +21,8 @@ export function AddFurnitureDialog({ roomId, roomType }: { roomId: string; roomT
 
   const options = FURNITURE_BY_ROOM_TYPE[roomType] ?? [];
   const showGeneric = options.length === 0;
-  const allOptions = showGeneric ? GENERIC_FURNITURE : [...options, ...GENERIC_FURNITURE];
+  const combined = showGeneric ? GENERIC_FURNITURE : [...options, ...GENERIC_FURNITURE];
+  const allOptions = combined.filter((opt, i) => combined.findIndex((o) => o.name === opt.name) === i);
 
   function reset() {
     setSelected(null);

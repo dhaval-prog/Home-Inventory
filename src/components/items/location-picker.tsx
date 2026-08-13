@@ -91,7 +91,7 @@ export function LocationPicker({
           }}
         >
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select a home" />
+            <SelectValue>{(v) => homes.find((h) => h.id === v)?.name ?? "Select a home"}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {homes.map((h) => (
@@ -115,7 +115,7 @@ export function LocationPicker({
           }}
         >
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select a room" />
+            <SelectValue>{(v) => rooms.find((r) => r.id === v)?.name ?? "Select a room"}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {rooms.map((r) => (
@@ -138,7 +138,7 @@ export function LocationPicker({
           }}
         >
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select furniture" />
+            <SelectValue>{(v) => furniture.find((f) => f.id === v)?.name ?? "Select furniture"}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {furniture.map((f) => (
@@ -154,7 +154,7 @@ export function LocationPicker({
         <Label>Storage Location</Label>
         <Select value={locationId} disabled={!furnitureId} onValueChange={(v) => setLocationId(v ?? "")}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select a location" />
+            <SelectValue>{(v) => locations.find((l) => l.id === v)?.name ?? "Select a location"}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {locations.map((l) => (

@@ -44,7 +44,7 @@ export function AddRoomDialog({ homeId }: { homeId: string }) {
             <Label>Room type</Label>
             <Select value={type} onValueChange={(v) => setType(v as RoomType)}>
               <SelectTrigger className="w-full">
-                <SelectValue />
+                <SelectValue>{(v: RoomType) => ROOM_TYPE_META[v]?.label}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {(Object.keys(ROOM_TYPE_META) as RoomType[]).map((key) => (

@@ -76,7 +76,7 @@ export function RoomCard({
         )}
       </Link>
 
-      <div className="absolute right-3 top-3 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+      <div className="absolute right-3 top-3 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100">
         <DropdownMenu>
           <DropdownMenuTrigger
             render={

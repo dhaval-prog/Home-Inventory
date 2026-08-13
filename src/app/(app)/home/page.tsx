@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getHomeViewData } from "@/lib/home-data";
 import { HOME_TYPE_META } from "@/lib/constants";
 import { Badge } from "@/components/ui/badge";
-import { RoomCard } from "@/components/home/room-card";
+import { HomeViewToggle } from "@/components/home/home-view-toggle";
 import { AddRoomDialog } from "@/components/home/add-room-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
@@ -73,17 +73,7 @@ export default async function HomePage({
           action={<AddRoomDialog homeId={homeId} />}
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {rooms.map((r, i) => (
-            <RoomCard
-              key={r.room.id}
-              homeId={homeId}
-              data={r}
-              isFirst={i === 0}
-              isLast={i === rooms.length - 1}
-            />
-          ))}
-        </div>
+        <HomeViewToggle homeId={homeId} rooms={rooms} />
       )}
     </div>
   );
