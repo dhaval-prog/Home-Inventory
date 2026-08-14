@@ -12,6 +12,13 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
 import { Plus, Star, AlertTriangle, Clock } from "lucide-react";
 
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
 export default async function HomePage({
   searchParams,
 }: {
@@ -35,11 +42,23 @@ export default async function HomePage({
   ]);
   if (!data) redirect("/home/new");
 
-  const { home, rooms } = data!;
+  const { home, rooms, totals } = data!;
   const meta = HOME_TYPE_META[home.home_type];
+  const subtext =
+    `${rooms.length} room${rooms.length === 1 ? "" : "s"}, ${totals.items} item${totals.items === 1 ? "" : "s"} catalogued.` +
+    (totals.noPhoto > 0
+      ? ` ${totals.noPhoto} thing${totals.noPhoto === 1 ? "" : "s"} need${totals.noPhoto === 1 ? "s" : ""} a photo.`
+      : "");
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
+      <div>
+        <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">
+          {greeting()}, {home.name}.
+        </h1>
+        <p className="mt-2 text-[15px] text-[#0b0b14]/60">{subtext}</p>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">

@@ -10,6 +10,7 @@ export interface RoomWithFurniture {
 export interface HomeViewData {
   home: Home;
   rooms: RoomWithFurniture[];
+  totals: { items: number; noPhoto: number };
 }
 
 export async function getHomeViewData(
@@ -37,8 +38,11 @@ export async function getHomeViewData(
 
   const storageIds = (storageLocations ?? []).map((s) => s.id);
   const { data: items } = storageIds.length
-    ? await supabase.from("items").select("id, storage_location_id").in("storage_location_id", storageIds)
-    : { data: [] as { id: string; storage_location_id: string }[] };
+    ? await supabase
+        .from("items")
+        .select("id, storage_location_id, photo_url")
+        .in("storage_location_id", storageIds)
+    : { data: [] as { id: string; storage_location_id: string; photo_url: string | null }[] };
 
   const storageToFurniture = new Map((storageLocations ?? []).map((s) => [s.id, s.furniture_id]));
   const itemCountByFurniture = new Map<string, number>();
@@ -59,5 +63,10 @@ export async function getHomeViewData(
     };
   });
 
-  return { home, rooms: roomsWithFurniture };
+  const totals = {
+    items: (items ?? []).length,
+    noPhoto: (items ?? []).filter((i) => !i.photo_url).length,
+  };
+
+  return { home, rooms: roomsWithFurniture, totals };
 }
