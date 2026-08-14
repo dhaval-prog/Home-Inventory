@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { ContactShadows, OrbitControls } from "@react-three/drei";
@@ -25,38 +25,38 @@ function isMobileViewport() {
   return typeof window !== "undefined" && window.innerWidth < 768;
 }
 
-/** Flies the camera in from a wide overview to the framed target once on mount, then hands off to OrbitControls. */
+/**
+ * Every mount gets a cinematic entrance: the camera starts pulled back/up from a wide
+ * establishing shot and swoops in to the resting framing (whole-home overview, or the
+ * focused room/item when one is given). Once settled it hands off to OrbitControls,
+ * which keeps a slow idle auto-rotate going so the scene reads as "alive" 3D rather
+ * than a static render — auto-rotate stops for good the moment the user takes control.
+ */
 function CameraRig({
-  overviewPosition,
+  introPosition,
   finalPosition,
-  overviewTarget,
+  introTarget,
   finalTarget,
-  fly,
   minDistance,
   maxDistance,
 }: {
-  overviewPosition: Vector3;
+  introPosition: Vector3;
   finalPosition: Vector3;
-  overviewTarget: Vector3;
+  introTarget: Vector3;
   finalTarget: Vector3;
-  fly: boolean;
   minDistance: number;
   maxDistance: number;
 }) {
   const { camera } = useThree();
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
-  const animating = useRef(fly);
+  const animating = useRef(true);
+  const [autoRotate, setAutoRotate] = useState(true);
 
   useLayoutEffect(() => {
-    if (fly) {
-      camera.position.copy(overviewPosition);
-      controlsRef.current?.target.copy(overviewTarget);
-      controlsRef.current?.update();
-      animating.current = true;
-    } else {
-      controlsRef.current?.target.copy(finalTarget);
-      controlsRef.current?.update();
-    }
+    camera.position.copy(introPosition);
+    controlsRef.current?.target.copy(introTarget);
+    controlsRef.current?.update();
+    animating.current = true;
     // Intentionally run once on mount only — this is a one-shot flight, not a reactive sync.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -83,6 +83,9 @@ function CameraRig({
       maxPolarAngle={Math.PI / 2 - 0.05}
       enableDamping
       dampingFactor={0.1}
+      autoRotate={autoRotate}
+      autoRotateSpeed={0.6}
+      onStart={() => setAutoRotate(false)}
     />
   );
 }
@@ -105,36 +108,46 @@ function SceneContents({
   const targetZ = focused ? focused.z : bounds.centerZ;
   const camDistance = focused ? Math.max(focused.width, focused.depth) * 1.3 : bounds.radius * 0.95;
 
-  const overviewPosition = useMemo(
-    () =>
-      new Vector3(
+  const restingPosition = useMemo(() => {
+    if (!focused) {
+      return new Vector3(
         bounds.centerX + bounds.radius * 0.75,
         bounds.radius * 0.6,
         bounds.centerZ + bounds.radius * 0.75
+      );
+    }
+    const span = Math.max(focused.width, focused.depth) * 0.9;
+    return new Vector3(focused.x + span, span * 0.85, focused.z + span);
+  }, [focused, bounds.centerX, bounds.centerZ, bounds.radius]);
+  const restingTarget = useMemo(() => new Vector3(targetX, 0.6, targetZ), [targetX, targetZ]);
+
+  // Wide, elevated establishing shot every scene swoops in from — always noticeably
+  // further back/up than the resting framing so the entrance is visible even when
+  // there's no specific room/item focus (dashboard + whole-home overview).
+  const introPosition = useMemo(
+    () =>
+      new Vector3(
+        bounds.centerX + bounds.radius * 1.6,
+        bounds.radius * 1.35 + 2,
+        bounds.centerZ + bounds.radius * 1.6
       ),
     [bounds.centerX, bounds.centerZ, bounds.radius]
   );
-  const overviewTarget = useMemo(
+  const introTarget = useMemo(
     () => new Vector3(bounds.centerX, 0.6, bounds.centerZ),
     [bounds.centerX, bounds.centerZ]
   );
-  const finalPosition = useMemo(() => {
-    if (!focused) return overviewPosition.clone();
-    const span = Math.max(focused.width, focused.depth) * 0.9;
-    return new Vector3(focused.x + span, span * 0.85, focused.z + span);
-  }, [focused, overviewPosition]);
-  const finalTarget = useMemo(() => new Vector3(targetX, 0.6, targetZ), [targetX, targetZ]);
 
   return (
     <>
       {/* Fully local lighting rig (no external HDR/CDN assets) so the scene
           never depends on network access to render. Warm key + cool fill for depth. */}
-      <hemisphereLight color="#eef1fb" groundColor="#c9baa3" intensity={0.55} />
-      <ambientLight intensity={0.25} />
+      <hemisphereLight color="#eef1fb" groundColor="#c9baa3" intensity={0.5} />
+      <ambientLight intensity={0.22} />
       <directionalLight
         position={[bounds.centerX + 8, 12, bounds.centerZ + 6]}
-        intensity={1.3}
-        color="#fff3df"
+        intensity={1.55}
+        color="#fff2da"
         castShadow={!mobile}
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
@@ -144,8 +157,8 @@ function SceneContents({
         shadow-camera-bottom={-bounds.radius}
         shadow-bias={-0.0015}
       />
-      <directionalLight position={[bounds.centerX - 10, 6, bounds.centerZ - 8]} intensity={0.3} color="#dde6f5" />
-      <directionalLight position={[bounds.centerX, 5, bounds.centerZ + 12]} intensity={0.2} color="#f5ece0" />
+      <directionalLight position={[bounds.centerX - 10, 6, bounds.centerZ - 8]} intensity={0.32} color="#dbe6f7" />
+      <directionalLight position={[bounds.centerX, 5, bounds.centerZ + 12]} intensity={0.22} color="#f5ece0" />
 
       <mesh position={[bounds.centerX, -0.01, bounds.centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[bounds.radius * 3, bounds.radius * 3]} />
@@ -155,9 +168,9 @@ function SceneContents({
       {!mobile && (
         <ContactShadows
           position={[bounds.centerX, 0, bounds.centerZ]}
-          opacity={0.35}
+          opacity={0.5}
           scale={bounds.radius * 3}
-          blur={2}
+          blur={1.8}
           far={2}
         />
       )}
@@ -179,11 +192,10 @@ function SceneContents({
       ))}
 
       <CameraRig
-        overviewPosition={overviewPosition}
-        finalPosition={finalPosition}
-        overviewTarget={overviewTarget}
-        finalTarget={finalTarget}
-        fly={Boolean(focused)}
+        introPosition={introPosition}
+        finalPosition={restingPosition}
+        introTarget={introTarget}
+        finalTarget={restingTarget}
         minDistance={focused ? camDistance * 0.6 : 4}
         maxDistance={focused ? camDistance * 2.2 : bounds.radius * 2.2}
       />
@@ -194,11 +206,12 @@ function SceneContents({
 export default function HomeScene3D(props: HomeScene3DProps) {
   const layout = useMemo(() => computeRoomLayout(props.rooms), [props.rooms]);
   const bounds = useMemo(() => layoutBounds(layout), [layout]);
-  const focused = props.focusRoomId ? layout.find((l) => l.room.id === props.focusRoomId) : undefined;
-  const camX = focused ? focused.x + Math.max(focused.width, focused.depth) * 0.9 : bounds.centerX + bounds.radius * 0.75;
-  const camZ = focused ? focused.z + Math.max(focused.width, focused.depth) * 0.9 : bounds.centerZ + bounds.radius * 0.75;
-  const camY = focused ? Math.max(focused.width, focused.depth) * 0.75 : bounds.radius * 0.6;
   const mobile = useMemo(() => isMobileViewport(), []);
+  // Initial Canvas camera starts at the same wide establishing shot the rig flies
+  // in from; useLayoutEffect corrects it before first paint, this is just the seed.
+  const camX = bounds.centerX + bounds.radius * 1.6;
+  const camZ = bounds.centerZ + bounds.radius * 1.6;
+  const camY = bounds.radius * 1.35 + 2;
 
   return (
     <div className={props.className}>
