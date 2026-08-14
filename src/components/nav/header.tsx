@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Home, Search } from "lucide-react";
+import { Home } from "lucide-react";
 import { HeaderSearch } from "@/components/search/header-search";
 import { UserMenu } from "@/components/nav/user-menu";
 
@@ -12,14 +12,7 @@ export function Header({ name, email }: { name: string; email: string }) {
         </span>
       </Link>
 
-      <HeaderSearch className="hidden max-w-md flex-1 md:block" />
-
-      <Link
-        href="/search"
-        className="ml-auto flex size-9 items-center justify-center rounded-full text-foreground/60 hover:bg-white/50 md:hidden"
-      >
-        <Search className="size-5" />
-      </Link>
+      <HeaderSearch className="max-w-md flex-1" />
 
       <div className="hidden md:ml-auto md:block" />
       <UserMenu name={name} email={email} />

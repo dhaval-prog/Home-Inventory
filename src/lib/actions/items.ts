@@ -44,6 +44,51 @@ function parseTags(raw: string): string[] {
     .filter(Boolean);
 }
 
+export interface NewItemInput {
+  storageLocationId: string;
+  name: string;
+  category?: string;
+  description?: string | null;
+  quantity?: number;
+  container?: string | null;
+  photoUrl?: string | null;
+  tags?: string[];
+  isFavorite?: boolean;
+  isImportant?: boolean;
+}
+
+/** Shared insert logic used by both the manual form action and voice-add. */
+async function insertItemRow(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  input: NewItemInput
+): Promise<{ id: string } | { error: string }> {
+  const name = input.name.trim();
+  if (!name) return { error: "Please give the item a name." };
+  if (!input.storageLocationId) return { error: "Please choose where this item is stored." };
+
+  const { data, error } = await supabase
+    .from("items")
+    .insert({
+      user_id: userId,
+      storage_location_id: input.storageLocationId,
+      name,
+      category: input.category ?? "other",
+      description: input.description ?? null,
+      quantity: input.quantity ?? 1,
+      container: input.container ?? null,
+      photo_url: input.photoUrl ?? null,
+      tags: input.tags ?? [],
+      is_favorite: input.isFavorite ?? false,
+      is_important: input.isImportant ?? false,
+    })
+    .select("id")
+    .single();
+
+  if (error || !data) return { error: "Something went wrong while saving this item. Please try again." };
+  return { id: data.id };
+}
+
 export async function createItem(
   _prevState: ItemFormState,
   formData: FormData
@@ -55,36 +100,55 @@ export async function createItem(
   if (!user) return { error: "Not authenticated." };
 
   const storageLocationId = String(formData.get("storageLocationId") ?? "");
-  const name = String(formData.get("name") ?? "").trim();
   const roomId = String(formData.get("roomId") ?? "");
   const furnitureId = String(formData.get("furnitureId") ?? "");
-
-  if (!name) return { error: "Please give the item a name." };
-  if (!storageLocationId) return { error: "Please choose where this item is stored." };
 
   const { url, error: uploadError } = await uploadPhotoIfPresent(supabase, user.id, formData);
   if (uploadError) return { error: uploadError };
 
-  const { error } = await supabase.from("items").insert({
-    user_id: user.id,
-    storage_location_id: storageLocationId,
-    name,
+  const result = await insertItemRow(supabase, user.id, {
+    storageLocationId,
+    name: String(formData.get("name") ?? ""),
     category: String(formData.get("category") ?? "other"),
     description: String(formData.get("description") ?? "") || null,
     quantity: Number(formData.get("quantity") ?? 1) || 1,
     container: String(formData.get("container") ?? "") || null,
-    photo_url: url ?? null,
+    photoUrl: url ?? null,
     tags: parseTags(String(formData.get("tags") ?? "")),
-    is_favorite: formData.get("isFavorite") === "on",
-    is_important: formData.get("isImportant") === "on",
+    isFavorite: formData.get("isFavorite") === "on",
+    isImportant: formData.get("isImportant") === "on",
   });
-
-  if (error) return { error: "Something went wrong while saving this item. Please try again." };
+  if ("error" in result) return { error: result.error };
 
   revalidatePath(`/home/rooms/${roomId}/furniture/${furnitureId}`);
   revalidatePath("/items");
   revalidatePath("/dashboard");
   redirect(`/home/rooms/${roomId}/furniture/${furnitureId}`);
+}
+
+/**
+ * Voice-add counterpart to createItem — same insertItemRow logic and the
+ * same `items` table/model, just a plain-object signature instead of a
+ * <form> FormData binding (voice input is assembled from parsed speech, not
+ * a form submit) and it reports success instead of redirecting, since the
+ * confirm-card UI decides what happens next.
+ */
+export async function createItemFromVoice(
+  input: NewItemInput & { roomId: string; furnitureId: string }
+): Promise<{ itemId: string } | { error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated." };
+
+  const result = await insertItemRow(supabase, user.id, input);
+  if ("error" in result) return { error: result.error };
+
+  revalidatePath(`/home/rooms/${input.roomId}/furniture/${input.furnitureId}`);
+  revalidatePath("/items");
+  revalidatePath("/dashboard");
+  return { itemId: result.id };
 }
 
 export async function updateItem(

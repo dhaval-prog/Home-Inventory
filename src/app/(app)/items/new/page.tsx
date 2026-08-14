@@ -5,9 +5,9 @@ import { createItem } from "@/lib/actions/items";
 export default async function NewItemPage({
   searchParams,
 }: {
-  searchParams: Promise<{ roomId?: string; furnitureId?: string; storageLocationId?: string; homeId?: string }>;
+  searchParams: Promise<{ roomId?: string; furnitureId?: string; storageLocationId?: string; homeId?: string; name?: string }>;
 }) {
-  const { roomId, furnitureId, storageLocationId, homeId } = await searchParams;
+  const { roomId, furnitureId, storageLocationId, homeId, name } = await searchParams;
 
   let locationLabel: string | undefined;
   if (roomId && furnitureId && storageLocationId) {
@@ -33,6 +33,7 @@ export default async function NewItemPage({
       <ItemForm
         action={createItem}
         initialLocation={{ roomId, furnitureId, storageLocationId, homeId }}
+        initialName={name}
         locationLabel={locationLabel}
         submitLabel="Save Item"
       />

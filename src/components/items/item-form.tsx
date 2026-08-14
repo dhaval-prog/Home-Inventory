@@ -21,6 +21,7 @@ export function ItemForm({
   action,
   item,
   initialLocation,
+  initialName,
   locationLabel,
   submitLabel,
   allowLocationChange = true,
@@ -28,6 +29,7 @@ export function ItemForm({
   action: ItemAction;
   item?: Item;
   initialLocation?: { roomId?: string; furnitureId?: string; storageLocationId?: string; homeId?: string };
+  initialName?: string;
   locationLabel?: string;
   submitLabel: string;
   allowLocationChange?: boolean;
@@ -85,7 +87,7 @@ export function ItemForm({
 
       <div className="space-y-1.5">
         <Label htmlFor="name">Item Name</Label>
-        <Input id="name" name="name" defaultValue={item?.name} placeholder="Passport" required />
+        <Input id="name" name="name" defaultValue={item?.name ?? initialName} placeholder="Passport" required />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">

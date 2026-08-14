@@ -17,6 +17,12 @@ Supabase (Postgres + Auth + Storage).
 - Add items with category, description, quantity, container, tags, photo
 - Global search with live suggestions, matching item name/category/tags as
   well as the room/furniture/storage location they live in
+- Voice search & voice add-item — tap the mic in the search bar to find
+  things ("where is my passport?") or add them ("add my black headphones to
+  the bedroom wardrobe, second shelf") by speaking. Works out of the box with
+  a built-in rule-based parser; optionally upgrade to Gemini for richer
+  understanding by setting `GEMINI_API_KEY`. Falls back to plain text search
+  in browsers without speech recognition support
 - Full breadcrumb path everywhere an item appears (`Home → Room → Furniture
   → Storage Location → Container → Item`)
 - Move item between any room/furniture/storage location
@@ -85,6 +91,7 @@ Environment Variables) and fill in:
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase → Project Settings → API |
 | `NEXT_PUBLIC_SITE_URL` | Your app's public URL (used in password-reset emails) |
+| `GEMINI_API_KEY` *(optional)* | Free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — enables richer voice search/add understanding. Server-side only, never exposed to the browser. Voice search works fully without it. |
 
 Never commit real keys — `.env.local` is already gitignored.
 
