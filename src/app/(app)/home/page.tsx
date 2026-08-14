@@ -10,7 +10,7 @@ import { AddRoomDialog } from "@/components/home/add-room-dialog";
 import { DeleteHomeDialog } from "@/components/home/delete-home-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Plus, Star, AlertTriangle, Clock } from "lucide-react";
 
 export default async function HomePage({
   searchParams,
@@ -50,7 +50,7 @@ export default async function HomePage({
             {rooms.length} room{rooms.length === 1 ? "" : "s"}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {homes.length > 1 && (
             <div className="flex flex-wrap gap-1.5">
               {homes.map((h) => (
@@ -68,6 +68,25 @@ export default async function HomePage({
           </Link>
           <AddRoomDialog homeId={homeId} />
           {homes.length > 1 && <DeleteHomeDialog homeId={homeId} homeName={home.name} roomCount={rooms.length} />}
+          <span className="mx-1 hidden h-6 w-px bg-[#0b0b14]/10 sm:block" />
+          <Link href="/favorites">
+            <Button variant="outline" size="sm" className="border-[#0b0b14]/12 bg-white">
+              <Star className="size-4" />
+              Favorites
+            </Button>
+          </Link>
+          <Link href="/important">
+            <Button variant="outline" size="sm" className="border-[#0b0b14]/12 bg-white">
+              <AlertTriangle className="size-4" />
+              Important
+            </Button>
+          </Link>
+          <Link href="/recent">
+            <Button variant="outline" size="sm" className="border-[#0b0b14]/12 bg-white">
+              <Clock className="size-4" />
+              Recently Added
+            </Button>
+          </Link>
         </div>
       </div>
 

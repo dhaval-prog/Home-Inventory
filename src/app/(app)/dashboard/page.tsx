@@ -13,7 +13,11 @@ import { relativeDay } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SeedDemoButton } from "@/components/shared/seed-demo-button";
 import { DashboardHomeScene } from "@/components/home/dashboard-home-scene";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { ItemPreviewContent } from "@/components/items/item-preview-content";
 
 const ICON_BADGE_GRADIENTS = [
@@ -40,14 +44,21 @@ export default async function DashboardPage() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user!.id).maybeSingle();
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", user!.id)
+    .maybeSingle();
   const data = await getDashboardData(supabase);
   const sceneDataByHome = Object.fromEntries(
     (
       await Promise.all(
-        data.homes.map(async ({ home }) => [home.id, await getHomeSceneData(supabase, home.id)] as const)
+        data.homes.map(
+          async ({ home }) =>
+            [home.id, await getHomeSceneData(supabase, home.id)] as const,
+        ),
       )
-    ).filter(([, scene]) => scene !== null)
+    ).filter(([, scene]) => scene !== null),
   );
 
   const name = profile?.name || user?.email?.split("@")[0] || "there";
@@ -97,101 +108,130 @@ export default async function DashboardPage() {
           }
         />
       ) : (
-        <>
-          <div className="grid gap-5 md:grid-cols-2">
-            {data.homes.map(({ home, roomCount, furnitureCount, itemCount }) => {
-              const meta = HOME_TYPE_META[home.home_type];
-              return (
-                <Card key={home.id} className="p-5">
-                  <CardHeader className="flex-row items-start justify-between space-y-0 p-0">
-                    <div>
-                      <p className="text-[10.5px] font-medium uppercase tracking-widest text-[#0b0b14]/45">
-                        Your home
-                      </p>
-                      <h2 className="mt-1 text-2xl font-semibold tracking-tight">{home.name}</h2>
-                      <div className="mt-2 flex gap-1.5">
-                        <Badge className="bg-[#0b0b14] text-white">{meta.label}</Badge>
-                        <Badge variant="secondary" className="bg-[#0b0b14]/7 text-[#0b0b14]">
-                          {roomCount} room{roomCount === 1 ? "" : "s"}
-                        </Badge>
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="border-[#0b0b14]/12 bg-white"
-                      render={<Link href={`/home?id=${home.id}&manage=1`}>Manage</Link>}
-                    />
-                  </CardHeader>
-                  <CardContent className="mt-3.5 space-y-3.5 p-0">
-                    {roomCount > 0 && sceneDataByHome[home.id] ? (
-                      <DashboardHomeScene
-                        rooms={sceneDataByHome[home.id]!.rooms}
-                        furnitureByRoom={sceneDataByHome[home.id]!.furnitureByRoom}
-                        itemsByFurniture={sceneDataByHome[home.id]!.itemsByFurniture}
-                      />
-                    ) : (
-                      <div className="flex h-64 items-center justify-center rounded-[20px] bg-gradient-to-br from-[#fdf3c8] via-[#f4a8cf] to-[#c9a1f0] text-[11px] font-medium uppercase tracking-widest text-[#0b0b14]/45 sm:h-72">
-                        <HomeIcon className="mr-2 size-4" /> 3D home view
-                      </div>
-                    )}
-                    <div className="grid grid-cols-3 gap-2 rounded-[20px] bg-white p-3 text-center">
-                      <Stat label="Rooms" value={roomCount} />
-                      <Stat label="Furniture" value={furnitureCount} />
-                      <Stat label="Items" value={itemCount} />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        render={<Link href={`/home?id=${home.id}`}>View home</Link>}
-                      />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="border-[#0b0b14]/12 bg-white"
-                        render={
-                          <Link href={`/quick-add?type=item&homeId=${home.id}`}>
-                            <Plus className="size-4" />
-                            Add item
-                          </Link>
-                        }
-                      />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="border-[#0b0b14]/12 bg-white"
-                        render={
-                          <Link href="/search">
-                            <Search className="size-4" />
-                            Search items
-                          </Link>
-                        }
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+          <div className="flex-1 space-y-5">
+            <div className="grid gap-5 xl:grid-cols-2">
+              {data.homes.map(
+                ({ home, roomCount, furnitureCount, itemCount }) => {
+                  const meta = HOME_TYPE_META[home.home_type];
+                  return (
+                    <Card key={home.id} className="p-5">
+                      <CardHeader className="flex-row items-start justify-between space-y-0 p-0">
+                        <div>
+                          <p className="text-[10.5px] font-medium uppercase tracking-widest text-[#0b0b14]/45">
+                            Your home
+                          </p>
+                          <h2 className="mt-1 text-2xl font-semibold tracking-tight">
+                            {home.name}
+                          </h2>
+                          <div className="mt-2 flex gap-1.5">
+                            <Badge className="bg-[#0b0b14] text-white">
+                              {meta.label}
+                            </Badge>
+                            <Badge
+                              variant="secondary"
+                              className="bg-[#0b0b14]/7 text-[#0b0b14]"
+                            >
+                              {roomCount} room{roomCount === 1 ? "" : "s"}
+                            </Badge>
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-[#0b0b14]/12 bg-white"
+                          render={
+                            <Link href={`/home?id=${home.id}&manage=1`}>
+                              Manage
+                            </Link>
+                          }
+                        />
+                      </CardHeader>
+                      <CardContent className="mt-3.5 space-y-3.5 p-0">
+                        {roomCount > 0 && sceneDataByHome[home.id] ? (
+                          <DashboardHomeScene
+                            rooms={sceneDataByHome[home.id]!.rooms}
+                            furnitureByRoom={
+                              sceneDataByHome[home.id]!.furnitureByRoom
+                            }
+                            itemsByFurniture={
+                              sceneDataByHome[home.id]!.itemsByFurniture
+                            }
+                          />
+                        ) : (
+                          <div className="flex h-64 items-center justify-center rounded-[20px] bg-gradient-to-br from-[#fdf3c8] via-[#f4a8cf] to-[#c9a1f0] text-[11px] font-medium uppercase tracking-widest text-[#0b0b14]/45 sm:h-72">
+                            <HomeIcon className="mr-2 size-4" /> 3D home view
+                          </div>
+                        )}
+                        <div className="grid grid-cols-3 gap-2 rounded-[20px] bg-white p-3 text-center">
+                          <Stat label="Rooms" value={roomCount} />
+                          <Stat label="Furniture" value={furnitureCount} />
+                          <Stat label="Items" value={itemCount} />
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            render={
+                              <Link href={`/home?id=${home.id}`}>
+                                View home
+                              </Link>
+                            }
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-[#0b0b14]/12 bg-white"
+                            render={
+                              <Link
+                                href={`/quick-add?type=item&homeId=${home.id}`}
+                              >
+                                <Plus className="size-4" />
+                                Add item
+                              </Link>
+                            }
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-[#0b0b14]/12 bg-white"
+                            render={
+                              <Link href="/search">
+                                <Search className="size-4" />
+                                Search items
+                              </Link>
+                            }
+                          />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                },
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <StatTile label="Rooms" value={data.totals.rooms} />
+              <StatTile label="Furniture" value={data.totals.furniture} />
+              <StatTile label="Items" value={data.totals.items} />
+              <StatTile label="Categories" value={data.totals.categories} />
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <StatTile label="Rooms" value={data.totals.rooms} />
-            <StatTile label="Furniture" value={data.totals.furniture} />
-            <StatTile label="Items" value={data.totals.items} />
-            <StatTile label="Categories" value={data.totals.categories} />
-          </div>
-
-          <div className="grid gap-5 lg:grid-cols-3">
-            <Card className="p-5 lg:col-span-2">
+          <div className="space-y-5 lg:w-[380px] lg:shrink-0">
+            <Card className="p-5">
               <CardHeader className="flex-row items-baseline p-0">
-                <h3 className="text-[17px] font-semibold tracking-tight">Recently added</h3>
+                <h3 className="text-[17px] font-semibold tracking-tight">
+                  Recently added
+                </h3>
                 <Link href="/recent" className="ml-auto text-xs font-medium">
                   All
                 </Link>
               </CardHeader>
               <CardContent className="mt-3 p-0">
                 {data.recentItems.length === 0 ? (
-                  <p className="text-sm text-[#0b0b14]/55">Nothing added yet.</p>
+                  <p className="text-sm text-[#0b0b14]/55">
+                    Nothing added yet.
+                  </p>
                 ) : (
                   <ul className="divide-y divide-[#0b0b14]/6">
                     {data.recentItems.map(({ item, path }, i) => (
@@ -209,8 +249,14 @@ export default async function DashboardPage() {
                                   <HomeIcon className="size-3.5 text-[#0b0b14]" />
                                 </span>
                                 <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-[13px] font-semibold">{item.name}</span>
-                                  <LocationPath nodes={path} container={item.container} className="mt-0.5" />
+                                  <span className="block truncate text-[13px] font-semibold">
+                                    {item.name}
+                                  </span>
+                                  <LocationPath
+                                    nodes={path}
+                                    container={item.container}
+                                    className="mt-0.5"
+                                  />
                                 </span>
                                 <span className="shrink-0 text-[11px] text-[#0b0b14]/45">
                                   {relativeDay(item.created_at)}
@@ -231,17 +277,24 @@ export default async function DashboardPage() {
 
             <Card className="p-5">
               <CardHeader className="p-0">
-                <h3 className="text-[17px] font-semibold tracking-tight">Most used storage</h3>
+                <h3 className="text-[17px] font-semibold tracking-tight">
+                  Most used storage
+                </h3>
               </CardHeader>
               <CardContent className="mt-3 p-0">
                 {data.topAreas.length === 0 ? (
-                  <p className="text-sm text-[#0b0b14]/55">No storage areas in use yet.</p>
+                  <p className="text-sm text-[#0b0b14]/55">
+                    No storage areas in use yet.
+                  </p>
                 ) : (
                   <ol className="space-y-3">
                     {data.topAreas.map((area, i) => {
                       const Icon = getIcon(area.icon);
                       return (
-                        <li key={area.furnitureId} className="flex items-center gap-2.5 text-[13px]">
+                        <li
+                          key={area.furnitureId}
+                          className="flex items-center gap-2.5 text-[13px]"
+                        >
                           <span
                             className={`flex size-[22px] shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${STORAGE_BADGE_STYLES[i % STORAGE_BADGE_STYLES.length]}`}
                           >
@@ -249,9 +302,13 @@ export default async function DashboardPage() {
                           </span>
                           <Icon className="size-4 shrink-0 text-[#0b0b14]/45" />
                           <span className="min-w-0 flex-1 truncate">
-                            {area.roomName} {area.roomName && "·"} {area.furnitureName}
+                            {area.roomName} {area.roomName && "·"}{" "}
+                            {area.furnitureName}
                           </span>
-                          <Badge variant="secondary" className="shrink-0 bg-[#0b0b14]/7 text-[#0b0b14]">
+                          <Badge
+                            variant="secondary"
+                            className="shrink-0 bg-[#0b0b14]/7 text-[#0b0b14]"
+                          >
                             {area.itemCount} items
                           </Badge>
                         </li>
@@ -262,7 +319,7 @@ export default async function DashboardPage() {
               </CardContent>
             </Card>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -271,7 +328,9 @@ export default async function DashboardPage() {
 function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div>
-      <p className="text-2xl font-medium leading-none tracking-tight">{value}</p>
+      <p className="text-2xl font-medium leading-none tracking-tight">
+        {value}
+      </p>
       <p className="mt-1 text-[11px] text-[#0b0b14]/50">{label}</p>
     </div>
   );
@@ -282,7 +341,9 @@ function StatTile({ label, value }: { label: string; value: number }) {
     <Card className="p-4 text-center">
       <p className="flex items-center justify-center gap-1 text-2xl font-semibold">
         {value}
-        {label === "Categories" && <Sparkles className="size-4 text-[#0b0b14]" />}
+        {label === "Categories" && (
+          <Sparkles className="size-4 text-[#0b0b14]" />
+        )}
       </p>
       <p className="mt-1 text-xs text-[#0b0b14]/55">{label}</p>
     </Card>
