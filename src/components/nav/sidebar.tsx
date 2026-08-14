@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   Clock,
   Lock,
+  ShieldCheck,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -27,6 +28,7 @@ const ICONS: Record<string, LucideIcon> = {
   AlertTriangle,
   Clock,
   Lock,
+  ShieldCheck,
   Settings,
 };
 

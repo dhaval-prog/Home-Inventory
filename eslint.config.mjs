@@ -20,6 +20,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored third-party library, served as-is for the standalone Vault page.
+    "public/vault/vendor/**",
   ]),
 ]);
 
