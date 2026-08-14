@@ -7,7 +7,7 @@ import { Billboard } from "@react-three/drei";
 import { AdditiveBlending, Color, DoubleSide, type Group, type Mesh, type MeshStandardMaterial, type ShaderMaterial } from "three";
 import { seededRandom } from "@/lib/three/seeded-random";
 import { yardBoundaryRadius, yardPadHalf, useGroundLayout } from "@/components/three/vegetation";
-import type { EnvironmentTarget, WeatherCondition } from "@/lib/three/environment";
+import type { EnvironmentTarget, Season, WeatherCondition } from "@/lib/three/environment";
 
 interface Bounds {
   centerX: number;
@@ -190,13 +190,15 @@ function Butterfly({
 export function Butterflies({
   bounds,
   envRef,
+  season,
   mobile = false,
 }: {
   bounds: Bounds;
   envRef: MutableRefObject<EnvironmentTarget>;
+  season: Season;
   mobile?: boolean;
 }) {
-  const layout = useGroundLayout(bounds, mobile);
+  const layout = useGroundLayout(bounds, mobile, season);
   const waypoints = useMemo<[number, number][]>(() => layout.flowerClusters.map((f) => f.center), [layout]);
   const count = mobile ? 3 : 5;
   const specs = useMemo(() => {

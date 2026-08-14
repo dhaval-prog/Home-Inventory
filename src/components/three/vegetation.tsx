@@ -5,7 +5,7 @@ import type { MutableRefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Color, Object3D, type Group, type InstancedMesh, type MeshStandardMaterial } from "three";
 import { seededRandom } from "@/lib/three/seeded-random";
-import type { EnvironmentTarget } from "@/lib/three/environment";
+import type { EnvironmentTarget, Season } from "@/lib/three/environment";
 
 interface Bounds {
   centerX: number;
@@ -28,11 +28,45 @@ export function yardBoundaryRadius(radius: number): number {
 const TRUNK_COLORS = ["#8a6444", "#7c5a3d", "#93714f", "#846043"];
 // Muted, slightly olive greens (rather than saturated cartoon green) so the
 // yard sits comfortably next to the app's pastel cream/pink/purple palette.
+// This is the spring/summer baseline; autumn/winter shift most trees toward
+// their own palettes below (a minority of "evergreens" stay this color).
 const FOLIAGE_COLORS = ["#7a9c63", "#8aab6f", "#6f9159", "#96b378", "#7f9c66", "#89a86e"];
-// A minority of trees get a warm blossom or autumn accent instead of green,
-// for variety — never enough to make the whole yard look seasonal.
 const BLOSSOM_COLORS = ["#f0c3d8", "#f7dcc8", "#fbe9d6"];
 const AUTUMN_COLORS = ["#d98a4a", "#c96b3f", "#e0a25c"];
+const WINTER_COLORS = ["#9fae9c", "#8b9a8f", "#a8b5a5"];
+
+/** Picks a tree's two foliage colors (and whether its canopy should look thinned-out) for the given season. */
+function seasonalFoliagePalette(season: Season, rand: () => number): { colorA: string; colorB: string; thin: boolean } {
+  if (season === "autumn") {
+    const turned = rand() < 0.82; // most deciduous trees change color; a few evergreens don't
+    const palette = turned ? AUTUMN_COLORS : FOLIAGE_COLORS;
+    return {
+      colorA: palette[Math.floor(rand() * palette.length)],
+      colorB: palette[Math.floor(rand() * palette.length)],
+      thin: turned && rand() < 0.35,
+    };
+  }
+  if (season === "winter") {
+    const evergreen = rand() < 0.3;
+    const palette = evergreen ? FOLIAGE_COLORS : WINTER_COLORS;
+    return {
+      colorA: palette[Math.floor(rand() * palette.length)],
+      colorB: palette[Math.floor(rand() * palette.length)],
+      thin: !evergreen,
+    };
+  }
+  if (season === "spring") {
+    const blossom = rand() < 0.25;
+    const palette = blossom ? BLOSSOM_COLORS : FOLIAGE_COLORS;
+    return { colorA: palette[Math.floor(rand() * palette.length)], colorB: palette[Math.floor(rand() * palette.length)], thin: false };
+  }
+  // summer baseline
+  return {
+    colorA: FOLIAGE_COLORS[Math.floor(rand() * FOLIAGE_COLORS.length)],
+    colorB: FOLIAGE_COLORS[Math.floor(rand() * FOLIAGE_COLORS.length)],
+    thin: false,
+  };
+}
 
 type TreeKind = "blob" | "pine";
 
@@ -66,7 +100,7 @@ interface TreeSpec {
   branch: boolean;
 }
 
-function makeTreeSpecs(bounds: Bounds, count: number): TreeSpec[] {
+function makeTreeSpecs(bounds: Bounds, count: number, season: Season): TreeSpec[] {
   const rand = seededRandom(211);
   const boundary = yardBoundaryRadius(bounds.radius);
   const specs: TreeSpec[] = [];
@@ -78,25 +112,24 @@ function makeTreeSpecs(bounds: Bounds, count: number): TreeSpec[] {
     const trunkHeight = 0.42 + rand() * 0.34;
     const foliageRadius = 0.3 + rand() * 0.24;
 
-    // ~1-in-4 trees gets a blossom/autumn accent instead of green.
-    const isAccent = rand() < 0.25;
-    const palette = isAccent ? (rand() < 0.5 ? BLOSSOM_COLORS : AUTUMN_COLORS) : FOLIAGE_COLORS;
-    const colorA = palette[Math.floor(rand() * palette.length)];
-    const colorB = palette[Math.floor(rand() * palette.length)];
-    const kind: TreeKind = !isAccent && rand() < 0.3 ? "pine" : "blob";
+    const { colorA, colorB, thin } = seasonalFoliagePalette(season, rand);
+    const isAccent = colorA !== colorB || colorA !== FOLIAGE_COLORS[0]; // loose signal used only for kind selection below
+    const kind: TreeKind = season !== "autumn" && season !== "winter" && !isAccent && rand() < 0.3 ? "pine" : "blob";
 
     const lobes: FoliageLobe[] = [];
     const pineTiers: PineTier[] = [];
     if (kind === "blob") {
       // Irregular, asymmetric canopy: each lobe gets its own random angle,
       // distance and size — never a neat mirrored/stacked arrangement.
-      const lobeCount = 3 + Math.floor(rand() * 3);
+      // A "thin" (autumn-turning / winter-bare) tree gets fewer, smaller lobes.
+      const lobeCount = (thin ? 2 : 3) + Math.floor(rand() * 3);
+      const lobeScale = thin ? 0.32 : 0.42;
       for (let l = 0; l < lobeCount; l++) {
         const a = rand() * Math.PI * 2;
         const r = foliageRadius * (0.12 + rand() * 0.42);
         lobes.push({
           offset: [Math.cos(a) * r, foliageRadius * (0.35 + rand() * 1.05), Math.sin(a) * r],
-          scale: foliageRadius * (0.42 + rand() * 0.46),
+          scale: foliageRadius * (lobeScale + rand() * 0.46),
           color: rand() < 0.65 ? colorA : colorB,
         });
       }
@@ -202,14 +235,16 @@ function TreeInstance({ spec, envRef }: { spec: TreeSpec; envRef: MutableRefObje
 export function Trees({
   bounds,
   envRef,
+  season,
   mobile = false,
 }: {
   bounds: Bounds;
   envRef: MutableRefObject<EnvironmentTarget>;
+  season: Season;
   mobile?: boolean;
 }) {
   const count = mobile ? 9 : 16;
-  const specs = useMemo(() => makeTreeSpecs(bounds, count), [bounds, count]);
+  const specs = useMemo(() => makeTreeSpecs(bounds, count, season), [bounds, count, season]);
   return (
     <>
       {specs.map((spec, i) => (
@@ -238,8 +273,26 @@ interface SmallBushSpec {
   color: string;
 }
 
+/** Shared by the grass-tuft instances here and the main lawn plane in Yard (home-scene.tsx) so they always agree. */
+export function seasonalGrassColors(season: Season): { dry: string; wet: string } {
+  switch (season) {
+    case "autumn":
+      return { dry: "#a89a5c", wet: "#7a6f42" };
+    case "winter":
+      return { dry: "#9aa08e", wet: "#6b7260" };
+    default:
+      return { dry: "#9cb87a", wet: "#66805a" };
+  }
+}
+
+function seasonalBushPalette(season: Season): string[] {
+  if (season === "autumn") return AUTUMN_COLORS;
+  if (season === "winter") return WINTER_COLORS;
+  return FOLIAGE_COLORS;
+}
+
 /** Ground-detail layout: computed once per bounds, consumed by GroundDetail below. */
-function makeGroundLayout(bounds: Bounds, mobile: boolean) {
+function makeGroundLayout(bounds: Bounds, mobile: boolean, season: Season) {
   const rand = seededRandom(577);
   const boundary = yardBoundaryRadius(bounds.radius);
   const padHalf = yardPadHalf(bounds.radius);
@@ -283,6 +336,7 @@ function makeGroundLayout(bounds: Bounds, mobile: boolean) {
     };
   });
 
+  const bushPalette = seasonalBushPalette(season);
   const bushCount = mobile ? 3 : 5;
   const bushes: SmallBushSpec[] = Array.from({ length: bushCount }, () => {
     const angle = rand() * Math.PI * 2;
@@ -290,7 +344,7 @@ function makeGroundLayout(bounds: Bounds, mobile: boolean) {
     return {
       position: [bounds.centerX + Math.cos(angle) * dist, 0, bounds.centerZ + Math.sin(angle) * dist] as [number, number, number],
       scale: 0.7 + rand() * 0.6,
-      color: FOLIAGE_COLORS[Math.floor(rand() * FOLIAGE_COLORS.length)],
+      color: bushPalette[Math.floor(rand() * bushPalette.length)],
     };
   });
 
@@ -298,16 +352,18 @@ function makeGroundLayout(bounds: Bounds, mobile: boolean) {
 }
 
 /** Exposed so Butterflies (critters.tsx) can steer toward the same flower spots without recomputing the layout. */
-export function useGroundLayout(bounds: Bounds, mobile: boolean) {
-  return useMemo(() => makeGroundLayout(bounds, mobile), [bounds, mobile]);
+export function useGroundLayout(bounds: Bounds, mobile: boolean, season: Season) {
+  return useMemo(() => makeGroundLayout(bounds, mobile, season), [bounds, mobile, season]);
 }
 
 function GrassTufts({
   grass,
   envRef,
+  season,
 }: {
   grass: { position: [number, number, number]; rotationY: number; scale: number }[];
   envRef: MutableRefObject<EnvironmentTarget>;
+  season: Season;
 }) {
   const meshRef = useRef<InstancedMesh>(null);
   const swayRef = useRef<Group>(null);
@@ -325,9 +381,10 @@ function GrassTufts({
     mesh.instanceMatrix.needsUpdate = true;
   }, [grass]);
 
-  // Same muted-sage family as the lawn plane (home-scene.tsx Yard) so tufts blend in rather than reading as a different, more saturated green.
-  const grassColor = useMemo(() => new Color("#8bab6c"), []);
-  const grassWet = useMemo(() => new Color("#5c7a4a"), []);
+  // Same seasonal family as the lawn plane (home-scene.tsx Yard) so tufts blend in rather than reading as a different, oddly-timed green.
+  const seasonColors = useMemo(() => seasonalGrassColors(season), [season]);
+  const grassColor = useMemo(() => new Color(seasonColors.dry), [seasonColors]);
+  const grassWet = useMemo(() => new Color(seasonColors.wet), [seasonColors]);
   const matRef = useRef<MeshStandardMaterial>(null);
 
    
@@ -407,16 +464,18 @@ function SmallBush({ spec }: { spec: SmallBushSpec }) {
 export function GroundDetail({
   bounds,
   envRef,
+  season,
   mobile = false,
 }: {
   bounds: Bounds;
   envRef: MutableRefObject<EnvironmentTarget>;
+  season: Season;
   mobile?: boolean;
 }) {
-  const layout = useGroundLayout(bounds, mobile);
+  const layout = useGroundLayout(bounds, mobile, season);
   return (
     <>
-      <GrassTufts grass={layout.grass} envRef={envRef} />
+      <GrassTufts grass={layout.grass} envRef={envRef} season={season} />
       {layout.flowerClusters.map((f, i) => (
         <FlowerCluster key={i} spec={f} />
       ))}

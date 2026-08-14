@@ -14,9 +14,13 @@ export function LocationPath({
   className?: string;
   iconClassName?: string;
 }) {
+  // The home and room are already established by page context (page title,
+  // "My Home" nav, etc.) everywhere this renders — showing furniture onward
+  // keeps the path short instead of repeating "My Home > Hall" on every row.
+  const visibleNodes = nodes.length > 2 ? nodes.slice(2) : nodes;
   return (
     <div className={"flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground " + (className ?? "")}>
-      {nodes.map((node, i) => {
+      {visibleNodes.map((node, i) => {
         const Icon = node.type === "room" ? getCompactIcon(node.icon) : getIcon(node.icon);
         return (
           <Fragment key={node.id}>

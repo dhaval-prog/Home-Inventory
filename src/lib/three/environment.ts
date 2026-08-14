@@ -2,6 +2,23 @@ import { Color } from "three";
 
 export type WeatherCondition = "sunny" | "partly-cloudy" | "cloudy" | "rain" | "storm";
 
+export type Season = "winter" | "spring" | "summer" | "autumn";
+
+/**
+ * Calendar month -> meteorological season. Northern-hemisphere default (no
+ * geolocation dependency just for this) — matches the original design's
+ * `{ timeOfDay, weather, season, ... }` state shape. Stable for the whole
+ * session (seasons don't change minute to minute), so unlike time-of-day
+ * this never needs smoothing/lerping.
+ */
+export function computeSeason(date: Date): Season {
+  const month = date.getMonth(); // 0-11
+  if (month === 11 || month === 0 || month === 1) return "winter";
+  if (month >= 2 && month <= 4) return "spring";
+  if (month >= 5 && month <= 7) return "summer";
+  return "autumn";
+}
+
 /**
  * Clean external-data interface (section 22): if/when the app connects a
  * real weather API, map its response into this shape. Everything below
@@ -17,6 +34,7 @@ export interface EnvironmentTarget {
   /** Decimal hour 0-24 used to derive this target (for reference/debugging). */
   hour: number;
   isNight: boolean;
+  season: Season;
   /** Continuous 0 (night) .. 1 (full day) — drives butterfly/dog/streetlight fades smoothly, unlike the binary isNight flag. */
   dayAmount: number;
   /** Continuous 0 (day) .. 1 (deep night) — drives firefly/star/moon-adjacent fades. */
@@ -82,6 +100,7 @@ const WEATHER_DEFAULTS: Record<WeatherCondition, { cloudCoverage: number; rain: 
  */
 export function computeEnvironmentTarget(date: Date, weather: WeatherReading): EnvironmentTarget {
   const hour = date.getHours() + date.getMinutes() / 60;
+  const season = computeSeason(date);
 
   // Single continuous sine spanning the full day: 0 at sunrise (6:00) and
   // sunset (18:00), +1 at solar noon, -1 at midnight. Everything else
@@ -151,6 +170,7 @@ export function computeEnvironmentTarget(date: Date, weather: WeatherReading): E
   return {
     hour,
     isNight,
+    season,
     dayAmount,
     nightAmount,
     windStrength,

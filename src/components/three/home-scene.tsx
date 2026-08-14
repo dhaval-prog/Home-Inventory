@@ -10,10 +10,11 @@ import { SkyDome } from "@/components/three/sky-dome";
 import { Clouds } from "@/components/three/clouds";
 import { Rain, Lightning } from "@/components/three/rain";
 import { DynamicLights, HouseLights, OutdoorLights, SceneAtmosphere } from "@/components/three/environment-lighting";
-import { GroundDetail, Trees, yardPadHalf } from "@/components/three/vegetation";
+import { GroundDetail, Trees, seasonalGrassColors, yardPadHalf } from "@/components/three/vegetation";
 import { Butterflies, Dogs, Fireflies } from "@/components/three/critters";
 import { useEnvironment } from "@/lib/three/use-environment";
-import type { EnvironmentTarget, WeatherCondition } from "@/lib/three/environment";
+import { FallingLeaves, Snow } from "@/components/three/seasonal";
+import { computeSeason, type EnvironmentTarget, type Season, type WeatherCondition } from "@/lib/three/environment";
 import { computeRoomLayout, layoutBounds } from "@/lib/three/layout";
 import type { Furniture, Room } from "@/lib/supabase/types";
 import type { SceneItemSummary } from "@/lib/home-scene-data";
@@ -27,10 +28,12 @@ export interface HomeScene3DProps {
   focusRoomId?: string;
   highlightFurnitureId?: string;
   className?: string;
-  /** Optional live weather condition (section 22: connect a real API here later). Defaults to "sunny". */
+  /** Optional live weather condition, connected to a real API (Open-Meteo) once the user opts in — see use-live-weather.ts. Defaults to "sunny". */
   weather?: WeatherCondition;
   /** Optional fixed hour (0-24) to preview a specific time of day; omit to use the real local time. */
   timeOverrideHour?: number;
+  /** Optional season override (QA/testing only — season is normally derived from the real calendar date). */
+  seasonOverride?: Season;
 }
 
 function isMobileViewport() {
@@ -143,32 +146,42 @@ function Yard({
   bounds,
   envRef,
   weather,
+  season,
   mobile,
 }: {
   bounds: SceneBounds;
   envRef: MutableRefObject<EnvironmentTarget>;
   weather: WeatherCondition;
+  season: Season;
   mobile: boolean;
 }) {
   const grassRef = useRef<Mesh>(null);
   const padRef = useRef<Mesh>(null);
-  // Muted sage rather than saturated cartoon green — sits better next to the
-  // app's pastel cream/pink/purple "Radiant" palette.
-  const grassDryColor = useMemo(() => new Color("#9cb87a"), []);
-  const grassWetColor = useMemo(() => new Color("#66805a"), []);
+  // Muted sage (spring/summer) or a seasonal shift toward autumn/winter tones
+  // — sits better next to the app's pastel cream/pink/purple "Radiant" palette
+  // than a saturated cartoon green either way.
+  const seasonGrass = useMemo(() => seasonalGrassColors(season), [season]);
+  const grassDryColor = useMemo(() => new Color(seasonGrass.dry), [seasonGrass]);
+  const grassWetColor = useMemo(() => new Color(seasonGrass.wet), [seasonGrass]);
   const padDryColor = useMemo(() => new Color("#ede4d0"), []);
   const padWetColor = useMemo(() => new Color("#c9c0ab"), []);
+  const snowColor = useMemo(() => new Color("#eef3f8"), []);
 
   useFrame(() => {
-    const wetness = envRef.current.groundWetness;
+    const env = envRef.current;
+    const wetness = env.groundWetness;
+    // Winter precipitation dusts the yard with snow instead of just wetting
+    // it — reuses groundWetness as "how much precipitation" regardless of
+    // whether it's currently rendering as rain or snow (see rain.tsx/seasonal.tsx).
+    const snowAmount = env.season === "winter" ? wetness : 0;
     const grassMat = grassRef.current?.material as MeshStandardMaterial | undefined;
     if (grassMat) {
-      grassMat.color.copy(grassDryColor).lerp(grassWetColor, wetness);
+      grassMat.color.copy(grassDryColor).lerp(grassWetColor, wetness).lerp(snowColor, snowAmount);
       grassMat.roughness = 1 - wetness * 0.65;
     }
     const padMat = padRef.current?.material as MeshStandardMaterial | undefined;
     if (padMat) {
-      padMat.color.copy(padDryColor).lerp(padWetColor, wetness);
+      padMat.color.copy(padDryColor).lerp(padWetColor, wetness).lerp(snowColor, snowAmount);
       padMat.roughness = 0.95 - wetness * 0.7;
     }
   });
@@ -193,7 +206,7 @@ function Yard({
       {/* Grass field */}
       <mesh ref={grassRef} position={[bounds.centerX, -0.02, bounds.centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[bounds.radius * 3, bounds.radius * 3]} />
-        <meshStandardMaterial color="#9cb87a" roughness={1} />
+        <meshStandardMaterial color={seasonGrass.dry} roughness={1} />
       </mesh>
 
       {/* House foundation pad */}
@@ -210,9 +223,9 @@ function Yard({
         </mesh>
       ))}
 
-      <GroundDetail bounds={bounds} envRef={envRef} mobile={mobile} />
-      <Trees bounds={bounds} envRef={envRef} mobile={mobile} />
-      <Butterflies bounds={bounds} envRef={envRef} mobile={mobile} />
+      <GroundDetail bounds={bounds} envRef={envRef} season={season} mobile={mobile} />
+      <Trees bounds={bounds} envRef={envRef} season={season} mobile={mobile} />
+      <Butterflies bounds={bounds} envRef={envRef} season={season} mobile={mobile} />
       <Fireflies bounds={bounds} envRef={envRef} mobile={mobile} />
       <Dogs bounds={bounds} envRef={envRef} weather={weather} mobile={mobile} />
     </>
@@ -229,11 +242,16 @@ function SceneContents({
   highlightFurnitureId,
   weather,
   timeOverrideHour,
+  seasonOverride,
   mobile,
 }: HomeScene3DProps & { mobile: boolean }) {
   const layout = useMemo(() => computeRoomLayout(rooms), [rooms]);
   const bounds = useMemo(() => layoutBounds(layout), [layout]);
-  const envRef = useEnvironment({ condition: weather ?? "sunny" }, timeOverrideHour);
+  const envRef = useEnvironment({ condition: weather ?? "sunny" }, timeOverrideHour, seasonOverride);
+  // Season is stable for the whole session (unlike time-of-day/weather, it
+  // never needs smoothing) — computed once here and threaded as a plain prop
+  // rather than read reactively off envRef, since useMemo can't touch a ref.
+  const season = useMemo(() => seasonOverride ?? computeSeason(new Date()), [seasonOverride]);
   const skyRadius = Math.max(bounds.radius * 4, 14);
 
   const focused = focusRoomId ? layout.find((l) => l.room.id === focusRoomId) : undefined;
@@ -285,11 +303,13 @@ function SceneContents({
       <SkyDome envRef={envRef} radius={skyRadius} sceneRadius={bounds.radius} center={[bounds.centerX, bounds.centerZ]} />
       <Clouds envRef={envRef} center={[bounds.centerX, bounds.centerZ]} radius={bounds.radius} lowQuality={mobile} />
       <Rain envRef={envRef} center={[bounds.centerX, bounds.centerZ]} radius={bounds.radius} lowQuality={mobile} />
+      <Snow envRef={envRef} center={[bounds.centerX, bounds.centerZ]} radius={bounds.radius} lowQuality={mobile} />
+      <FallingLeaves envRef={envRef} center={[bounds.centerX, bounds.centerZ]} radius={bounds.radius} lowQuality={mobile} />
       <Lightning envRef={envRef} center={[bounds.centerX, bounds.centerZ]} radius={bounds.radius} />
       <HouseLights envRef={envRef} layout={layout} />
       <OutdoorLights envRef={envRef} bounds={bounds} mobile={mobile} />
 
-      <Yard bounds={bounds} envRef={envRef} weather={weather ?? "sunny"} mobile={mobile} />
+      <Yard bounds={bounds} envRef={envRef} weather={weather ?? "sunny"} season={season} mobile={mobile} />
 
       {!mobile && (
         <ContactShadows

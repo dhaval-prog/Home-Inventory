@@ -60,7 +60,9 @@ export function Rain({
     const mesh = meshRef.current;
     if (!mesh) return;
 
-    const active = env.rainIntensity > 0.02;
+    // Winter precipitation is snow instead (see seasonal.tsx's Snow, which
+    // is active exactly when this is not) — the two are mutually exclusive.
+    const active = env.rainIntensity > 0.02 && env.season !== "winter";
     mesh.visible = active;
     if (!active) return;
 

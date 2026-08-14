@@ -2,7 +2,7 @@
 
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { computeEnvironmentTarget, type EnvironmentTarget, type WeatherReading } from "@/lib/three/environment";
+import { computeEnvironmentTarget, type EnvironmentTarget, type Season, type WeatherReading } from "@/lib/three/environment";
 
 const LERP_RATE = 0.55; // fraction closed per ~frame at 60fps — smooths without feeling laggy
 // The target only depends on wall-clock time, which barely moves frame to
@@ -27,9 +27,14 @@ function overrideDate(hourOverride?: number): Date {
  * (section 23). Returns a ref, not React state — consumers read it inside
  * their own useFrame so updating it never triggers a React re-render.
  */
-export function useEnvironment(weather: WeatherReading, timeOverrideHour?: number) {
+function applySeasonOverride(target: EnvironmentTarget, seasonOverride?: Season): EnvironmentTarget {
+  if (seasonOverride) target.season = seasonOverride;
+  return target;
+}
+
+export function useEnvironment(weather: WeatherReading, timeOverrideHour?: number, seasonOverride?: Season) {
   const initial = useMemo(
-    () => computeEnvironmentTarget(overrideDate(timeOverrideHour), weather),
+    () => applySeasonOverride(computeEnvironmentTarget(overrideDate(timeOverrideHour), weather), seasonOverride),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
@@ -41,7 +46,7 @@ export function useEnvironment(weather: WeatherReading, timeOverrideHour?: numbe
     sinceRecompute.current += delta;
     if (sinceRecompute.current >= RECOMPUTE_INTERVAL) {
       sinceRecompute.current = 0;
-      target.current = computeEnvironmentTarget(overrideDate(timeOverrideHour), weather);
+      target.current = applySeasonOverride(computeEnvironmentTarget(overrideDate(timeOverrideHour), weather), seasonOverride);
     }
 
     const t = clampLerpT(1 - Math.pow(1 - LERP_RATE, delta * 60));
@@ -50,6 +55,7 @@ export function useEnvironment(weather: WeatherReading, timeOverrideHour?: numbe
 
     c.hour = g.hour;
     c.isNight = g.isNight;
+    c.season = g.season;
     c.dayAmount = lerpNum(c.dayAmount, g.dayAmount, t);
     c.nightAmount = lerpNum(c.nightAmount, g.nightAmount, t);
     c.windStrength = lerpNum(c.windStrength, g.windStrength, t);
