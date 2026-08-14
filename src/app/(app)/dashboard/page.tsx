@@ -13,12 +13,6 @@ import { relativeDay } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SeedDemoButton } from "@/components/shared/seed-demo-button";
 import { DashboardHomeScene } from "@/components/home/dashboard-home-scene";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
-import { ItemPreviewContent } from "@/components/items/item-preview-content";
 
 const ICON_BADGE_GRADIENTS = [
   "from-[#fdf3c8] to-[#f4a8cf]",
@@ -229,38 +223,29 @@ export default async function DashboardPage() {
                   <ul className="divide-y divide-[#0b0b14]/6">
                     {data.recentItems.map(({ item, path }, i) => (
                       <li key={item.id}>
-                        <HoverCard>
-                          <HoverCardTrigger
-                            render={
-                              <Link
-                                href={`/items/${item.id}`}
-                                className="flex items-center gap-3 py-3 first:pt-0 last:pb-0 hover:opacity-80"
-                              >
-                                <span
-                                  className={`flex size-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${ICON_BADGE_GRADIENTS[i % ICON_BADGE_GRADIENTS.length]}`}
-                                >
-                                  <HomeIcon className="size-3.5 text-[#0b0b14]" />
-                                </span>
-                                <span className="min-w-0 flex-1">
-                                  <span className="block truncate text-[13px] font-semibold">
-                                    {item.name}
-                                  </span>
-                                  <LocationPath
-                                    nodes={path}
-                                    container={item.container}
-                                    className="mt-0.5"
-                                  />
-                                </span>
-                                <span className="shrink-0 text-[11px] text-[#0b0b14]/45">
-                                  {relativeDay(item.created_at)}
-                                </span>
-                              </Link>
-                            }
-                          />
-                          <HoverCardContent>
-                            <ItemPreviewContent item={item} path={path} />
-                          </HoverCardContent>
-                        </HoverCard>
+                        <Link
+                          href={`/items/${item.id}`}
+                          className="flex items-center gap-3 py-3 first:pt-0 last:pb-0 hover:opacity-80"
+                        >
+                          <span
+                            className={`flex size-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${ICON_BADGE_GRADIENTS[i % ICON_BADGE_GRADIENTS.length]}`}
+                          >
+                            <HomeIcon className="size-3.5 text-[#0b0b14]" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] font-semibold">
+                              {item.name}
+                            </span>
+                            <LocationPath
+                              nodes={path}
+                              container={item.container}
+                              className="mt-0.5"
+                            />
+                          </span>
+                          <span className="shrink-0 text-[11px] text-[#0b0b14]/45">
+                            {relativeDay(item.created_at)}
+                          </span>
+                        </Link>
                       </li>
                     ))}
                   </ul>

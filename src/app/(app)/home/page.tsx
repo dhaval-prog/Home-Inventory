@@ -67,6 +67,12 @@ export default async function HomePage({
             </Button>
           </Link>
           <AddRoomDialog homeId={homeId} />
+          <Link href={`/quick-add?type=item&homeId=${homeId}`}>
+            <Button size="sm">
+              <Plus className="size-4" />
+              Add Item
+            </Button>
+          </Link>
           {homes.length > 1 && <DeleteHomeDialog homeId={homeId} homeName={home.name} roomCount={rooms.length} />}
           <span className="mx-1 hidden h-6 w-px bg-[#0b0b14]/10 sm:block" />
           <Link href="/favorites">
