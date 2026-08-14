@@ -53,21 +53,6 @@ export default async function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-8 p-4 md:p-8">
-      <div className="flex items-start gap-4">
-        <div>
-          <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">
-            {greeting()}, {name}.
-          </h1>
-          <p className="mt-2 text-[15px] text-[#0b0b14]/60">{subtext}</p>
-        </div>
-        {data.homes.length > 0 && (
-          <span className="ml-auto hidden shrink-0 items-center gap-1.5 rounded-full bg-white/60 px-3.5 py-1.5 text-xs text-[#0b0b14]/60 md:inline-flex">
-            <span className="size-1.5 rounded-full bg-[#0b0b14]" />
-            Synced just now
-          </span>
-        )}
-      </div>
-
       {data.homes.length === 0 ? (
         <EmptyState
           icon="Home"
@@ -187,6 +172,21 @@ export default async function DashboardPage() {
           </div>
         </div>
       )}
+
+      <div className="flex items-start gap-4">
+        <div>
+          <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">
+            {greeting()}, {name}.
+          </h1>
+          <p className="mt-2 text-[15px] text-[#0b0b14]/60">{subtext}</p>
+        </div>
+        {data.homes.length > 0 && (
+          <span className="ml-auto hidden shrink-0 items-center gap-1.5 rounded-full bg-white/60 px-3.5 py-1.5 text-xs text-[#0b0b14]/60 md:inline-flex">
+            <span className="size-1.5 rounded-full bg-[#0b0b14]" />
+            Synced just now
+          </span>
+        )}
+      </div>
     </div>
   );
 }
