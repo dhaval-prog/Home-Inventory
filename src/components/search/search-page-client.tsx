@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { LocationPath } from "@/components/shared/location-path";
 import { ItemList } from "@/components/items/item-list";
+import { VoiceMicButton } from "@/components/search/voice-mic-button";
+import { VoiceSearchPanel } from "@/components/search/voice-search-panel";
 import { searchItems, type SearchResult } from "@/lib/actions/search";
 import { getCompactIcon } from "@/lib/icon-map";
 import { relativeDay } from "@/lib/utils";
@@ -85,6 +87,7 @@ function SearchInner({
   const [searched, setSearched] = useState(false);
   const [pending, startTransition] = useTransition();
   const [browseTab, setBrowseTab] = useState<BrowseTab>("search");
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   useEffect(() => {
     const term = query.trim();
@@ -109,16 +112,21 @@ function SearchInner({
     <div className="mx-auto max-w-2xl space-y-6 p-4 md:p-8">
       <BrowseTabBar active={browseTab} onChange={setBrowseTab} />
 
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          autoFocus
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="What are you looking for?"
-          className="h-12 pl-10 text-base"
-        />
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="What are you looking for?"
+            className="h-12 pl-10 text-base"
+          />
+        </div>
+        <VoiceMicButton isListening={false} onClick={() => setVoiceOpen(true)} />
       </div>
+
+      <VoiceSearchPanel open={voiceOpen} onOpenChange={setVoiceOpen} />
 
       {!searched && !pending && (
         <div className="space-y-8">

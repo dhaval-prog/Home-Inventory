@@ -1,11 +1,17 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { Search } from "lucide-react";
 import { VoiceSearchPanel } from "@/components/search/voice-search-panel";
 
 export function HeaderSearch({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+
+  // The Search page hosts this same search-and-voice functionality directly
+  // below its own search bar, so the header bar would just be a duplicate there.
+  if (pathname === "/search") return null;
 
   return (
     <>
