@@ -73,3 +73,10 @@ export async function deleteFurniture(furnitureId: string, roomId: string) {
   revalidatePath("/home/rooms/" + roomId);
   redirect("/home/rooms/" + roomId);
 }
+
+/** Persists a drag in the 2D top-down room view. Coordinates are room-local meters. */
+export async function updateFurniturePosition(furnitureId: string, roomId: string, x: number, z: number) {
+  const supabase = await createClient();
+  await supabase.from("furniture").update({ position_x: x, position_z: z }).eq("id", furnitureId);
+  revalidatePath("/home/rooms/" + roomId);
+}

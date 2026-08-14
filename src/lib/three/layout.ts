@@ -78,7 +78,29 @@ export interface PlacedFurniture {
   rotationY: number;
 }
 
+/**
+ * Furniture the user has dragged into place (position_x/position_z set) keeps that
+ * spot; everything else falls back to the deterministic auto-arranged grid so newly
+ * added furniture always starts somewhere sensible.
+ */
 export function placeFurniture(furniture: Furniture[], width: number, depth: number): PlacedFurniture[] {
-  const slots = computeFurnitureSlots(furniture.length, width, depth);
-  return furniture.map((f, i) => ({ furniture: f, ...slots[i] }));
+  const auto = furniture.filter((f) => f.position_x == null || f.position_z == null);
+  const slots = computeFurnitureSlots(auto.length, width, depth);
+  let autoIndex = 0;
+  const marginX = width / 2 - 0.3;
+  const marginZ = depth / 2 - 0.3;
+
+  return furniture.map((f) => {
+    if (f.position_x != null && f.position_z != null) {
+      return {
+        furniture: f,
+        x: Math.max(-marginX, Math.min(marginX, f.position_x)),
+        z: Math.max(-marginZ, Math.min(marginZ, f.position_z)),
+        rotationY: 0,
+      };
+    }
+    const slot = slots[autoIndex];
+    autoIndex += 1;
+    return { furniture: f, ...slot };
+  });
 }

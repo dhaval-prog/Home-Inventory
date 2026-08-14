@@ -63,6 +63,11 @@ create table if not exists public.furniture (
 create index if not exists furniture_room_id_idx on public.furniture (room_id);
 create index if not exists furniture_user_id_idx on public.furniture (user_id);
 
+-- Free-form 2D/3D placement within the room, in meters, room-local (origin at
+-- room center). Null means "not yet dragged" — auto-arranged in a grid instead.
+alter table public.furniture add column if not exists position_x double precision;
+alter table public.furniture add column if not exists position_z double precision;
+
 -- ─────────────────────────────────────────────────────────────
 -- storage_locations — nested via parent_id so future arbitrary-depth
 -- nesting (shelf → box → pouch …) works without a schema change.

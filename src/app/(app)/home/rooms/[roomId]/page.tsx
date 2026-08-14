@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getIcon } from "@/lib/icon-map";
 import { AddFurnitureDialog } from "@/components/home/add-furniture-dialog";
 import { FurnitureCard } from "@/components/home/furniture-card";
+import { RoomFloorPlan2D } from "@/components/home/room-floor-plan-2d";
 import { EmptyState } from "@/components/shared/empty-state";
 import type { RoomType } from "@/lib/constants";
 
@@ -76,11 +77,18 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
           action={<AddFurnitureDialog roomId={roomId} roomType={room.type as RoomType} />}
         />
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {(furniture ?? []).map((f) => (
-            <FurnitureCard key={f.id} roomId={roomId} furniture={f} itemCount={countByFurniture.get(f.id) ?? 0} />
-          ))}
-        </div>
+        <>
+          <RoomFloorPlan2D
+            room={room}
+            furniture={furniture ?? []}
+            itemCountByFurniture={Object.fromEntries(countByFurniture)}
+          />
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {(furniture ?? []).map((f) => (
+              <FurnitureCard key={f.id} roomId={roomId} furniture={f} itemCount={countByFurniture.get(f.id) ?? 0} />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

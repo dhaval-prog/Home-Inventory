@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Sparkles, Plus, Search, Home as HomeIcon } from "lucide-react";
+import { Plus, Search, Home as HomeIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { getDashboardData } from "@/lib/dashboard-data";
 import { getHomeSceneData } from "@/lib/home-scene-data";
@@ -110,7 +110,7 @@ export default async function DashboardPage() {
       ) : (
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
           <div className="flex-1 space-y-5">
-            <div className="grid gap-5 xl:grid-cols-2">
+            <div className={data.homes.length > 1 ? "grid gap-5 xl:grid-cols-2" : "grid gap-5"}>
               {data.homes.map(
                 ({ home, roomCount, furnitureCount, itemCount }) => {
                   const meta = HOME_TYPE_META[home.home_type];
@@ -207,13 +207,6 @@ export default async function DashboardPage() {
                   );
                 },
               )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <StatTile label="Rooms" value={data.totals.rooms} />
-              <StatTile label="Furniture" value={data.totals.furniture} />
-              <StatTile label="Items" value={data.totals.items} />
-              <StatTile label="Categories" value={data.totals.categories} />
             </div>
           </div>
 
@@ -333,19 +326,5 @@ function Stat({ label, value }: { label: string; value: number }) {
       </p>
       <p className="mt-1 text-[11px] text-[#0b0b14]/50">{label}</p>
     </div>
-  );
-}
-
-function StatTile({ label, value }: { label: string; value: number }) {
-  return (
-    <Card className="p-4 text-center">
-      <p className="flex items-center justify-center gap-1 text-2xl font-semibold">
-        {value}
-        {label === "Categories" && (
-          <Sparkles className="size-4 text-[#0b0b14]" />
-        )}
-      </p>
-      <p className="mt-1 text-xs text-[#0b0b14]/55">{label}</p>
-    </Card>
   );
 }

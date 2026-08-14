@@ -45,6 +45,8 @@ export type Furniture = {
   icon: string;
   description: string | null;
   sort_order: number;
+  position_x: number | null;
+  position_z: number | null;
   created_at: string;
 };
 
