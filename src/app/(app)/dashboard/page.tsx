@@ -1,10 +1,8 @@
 import Link from "next/link";
-import { Plus, Search, Home as HomeIcon } from "lucide-react";
+import { Plus, Home as HomeIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { getDashboardData } from "@/lib/dashboard-data";
-import { getHomeSceneData } from "@/lib/home-scene-data";
 import { getCompactIcon } from "@/lib/icon-map";
-import { HOME_TYPE_META } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,9 +10,6 @@ import { LocationPath } from "@/components/shared/location-path";
 import { relativeDay } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SeedDemoButton } from "@/components/shared/seed-demo-button";
-import { DashboardHomeScene } from "@/components/home/dashboard-home-scene";
-import type { Season, WeatherCondition } from "@/lib/three/environment";
-import { AddRoomDialog } from "@/components/home/add-room-dialog";
 
 const ICON_BADGE_GRADIENTS = [
   "from-[#fdf3c8] to-[#f4a8cf]",
@@ -35,15 +30,7 @@ function greeting() {
   return "Good evening";
 }
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  // QA-only preview hooks for the 3D scene's time-of-day/weather/season
-  // system (see lib/three/environment.ts) — harmless and invisible when omitted.
-  searchParams: Promise<{ weather?: WeatherCondition; hour?: string; season?: Season }>;
-}) {
-  const { weather, hour, season } = await searchParams;
-  const timeOverrideHour = hour ? Number(hour) : undefined;
+export default async function DashboardPage() {
   const supabase = await createClient();
   const {
     data: { user },
@@ -54,16 +41,6 @@ export default async function DashboardPage({
     .eq("id", user!.id)
     .maybeSingle();
   const data = await getDashboardData(supabase);
-  const sceneDataByHome = Object.fromEntries(
-    (
-      await Promise.all(
-        data.homes.map(
-          async ({ home }) =>
-            [home.id, await getHomeSceneData(supabase, home.id)] as const,
-        ),
-      )
-    ).filter(([, scene]) => scene !== null),
-  );
 
   const name = profile?.name || user?.email?.split("@")[0] || "there";
   const subtext =
@@ -112,126 +89,8 @@ export default async function DashboardPage({
           }
         />
       ) : (
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-          <div className="flex-1 space-y-5">
-            <div className={data.homes.length > 1 ? "grid gap-5 xl:grid-cols-2" : "grid gap-5"}>
-              {data.homes.map(
-                ({ home, roomCount, furnitureCount, itemCount }) => {
-                  const meta = HOME_TYPE_META[home.home_type];
-                  return (
-                    <Card key={home.id} className="p-5">
-                      <CardHeader className="flex-row items-start justify-between space-y-0 p-0">
-                        <div>
-                          <p className="text-[10.5px] font-medium uppercase tracking-widest text-[#0b0b14]/45">
-                            Your home
-                          </p>
-                          <h2 className="mt-1 text-2xl font-semibold tracking-tight">
-                            {home.name}
-                          </h2>
-                          <div className="mt-2 flex gap-1.5">
-                            <Badge className="bg-[#0b0b14] text-white">
-                              {meta.label}
-                            </Badge>
-                            <Badge
-                              variant="secondary"
-                              className="bg-[#0b0b14]/7 text-[#0b0b14]"
-                            >
-                              {roomCount} room{roomCount === 1 ? "" : "s"}
-                            </Badge>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="border-[#0b0b14]/12 bg-white"
-                            render={
-                              <Link href="/home/new">
-                                <Plus className="size-4" />
-                                New Home
-                              </Link>
-                            }
-                          />
-                          <AddRoomDialog homeId={home.id} />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="border-[#0b0b14]/12 bg-white"
-                            render={
-                              <Link href={`/home?id=${home.id}&manage=1`}>
-                                Manage
-                              </Link>
-                            }
-                          />
-                        </div>
-                      </CardHeader>
-                      <CardContent className="mt-3.5 space-y-3.5 p-0">
-                        {roomCount > 0 && sceneDataByHome[home.id] ? (
-                          <DashboardHomeScene
-                            rooms={sceneDataByHome[home.id]!.rooms}
-                            furnitureByRoom={
-                              sceneDataByHome[home.id]!.furnitureByRoom
-                            }
-                            itemsByFurniture={
-                              sceneDataByHome[home.id]!.itemsByFurniture
-                            }
-                            weather={weather}
-                            timeOverrideHour={timeOverrideHour}
-                            seasonOverride={season}
-                          />
-                        ) : (
-                          <div className="flex h-64 items-center justify-center rounded-[20px] bg-gradient-to-br from-[#fdf3c8] via-[#f4a8cf] to-[#c9a1f0] text-[11px] font-medium uppercase tracking-widest text-[#0b0b14]/45 sm:h-72">
-                            <HomeIcon className="mr-2 size-4" /> 3D home view
-                          </div>
-                        )}
-                        <div className="grid grid-cols-3 gap-2 rounded-[20px] bg-white p-3 text-center">
-                          <Stat label="Rooms" value={roomCount} />
-                          <Stat label="Furniture" value={furnitureCount} />
-                          <Stat label="Items" value={itemCount} />
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            render={
-                              <Link href={`/home?id=${home.id}`}>
-                                View home
-                              </Link>
-                            }
-                          />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="border-[#0b0b14]/12 bg-white"
-                            render={
-                              <Link
-                                href={`/quick-add?type=item&homeId=${home.id}`}
-                              >
-                                <Plus className="size-4" />
-                                Add item
-                              </Link>
-                            }
-                          />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="border-[#0b0b14]/12 bg-white"
-                            render={
-                              <Link href="/search">
-                                <Search className="size-4" />
-                                Search items
-                              </Link>
-                            }
-                          />
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                },
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-5 lg:w-[380px] lg:shrink-0">
+        <div className="grid gap-5 md:grid-cols-2">
+          <div className="space-y-5">
             <Card className="p-5">
               <CardHeader className="flex-row items-baseline p-0">
                 <h3 className="text-[17px] font-semibold tracking-tight">
@@ -279,7 +138,9 @@ export default async function DashboardPage({
                 )}
               </CardContent>
             </Card>
+          </div>
 
+          <div className="space-y-5">
             <Card className="p-5">
               <CardHeader className="p-0">
                 <h3 className="text-[17px] font-semibold tracking-tight">
@@ -326,17 +187,6 @@ export default async function DashboardPage({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div>
-      <p className="text-2xl font-medium leading-none tracking-tight">
-        {value}
-      </p>
-      <p className="mt-1 text-[11px] text-[#0b0b14]/50">{label}</p>
     </div>
   );
 }
