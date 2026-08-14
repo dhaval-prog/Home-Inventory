@@ -16,12 +16,14 @@ export interface FurnitureRecipe {
 
 const WOOD = "#b8926a";
 const WOOD_DARK = "#8a6444";
-const FABRIC_BLUE = "#7c93a8";
 const FABRIC_RED = "#b3766b";
 const METAL = "#cdd3d8";
 const DARK = "#2e2f33";
 const CREAM = "#e8e2d4";
 const GREEN = "#8faf8a";
+const SOFA_LEATHER = "#dd7f36";
+const SOFA_LEATHER_DARK = "#b3652a";
+const SOFA_LEG = "#2a1810";
 
 function box(size: FurniturePart["size"], position: FurniturePart["position"], color: string, extra?: Partial<FurniturePart>): FurniturePart {
   return { size, position, color, ...extra };
@@ -31,10 +33,32 @@ const RECIPES: Record<string, FurnitureRecipe> = {
   sofa: {
     footprint: [1.8, 0.85],
     parts: [
-      box([1.8, 0.38, 0.8], [0, 0.19, 0], FABRIC_BLUE),
-      box([1.8, 0.4, 0.15], [0, 0.55, -0.32], FABRIC_BLUE),
-      box([0.18, 0.5, 0.8], [-0.81, 0.25, 0], FABRIC_BLUE),
-      box([0.18, 0.5, 0.8], [0.81, 0.25, 0], FABRIC_BLUE),
+      // tapered wood legs
+      box([0.06, 0.16, 0.06], [-0.78, 0.08, -0.32], SOFA_LEG, { roughness: 0.6, metalness: 0.1 }),
+      box([0.06, 0.16, 0.06], [0.78, 0.08, -0.32], SOFA_LEG, { roughness: 0.6, metalness: 0.1 }),
+      box([0.06, 0.16, 0.06], [-0.78, 0.08, 0.32], SOFA_LEG, { roughness: 0.6, metalness: 0.1 }),
+      box([0.06, 0.16, 0.06], [0.78, 0.08, 0.32], SOFA_LEG, { roughness: 0.6, metalness: 0.1 }),
+      // skirt / base frame
+      box([1.72, 0.14, 0.76], [0, 0.23, 0], SOFA_LEATHER_DARK, { roughness: 0.45 }),
+      // two seat cushions with a thin center seam
+      box([0.82, 0.22, 0.74], [-0.42, 0.41, 0], SOFA_LEATHER, { roughness: 0.4 }),
+      box([0.82, 0.22, 0.74], [0.42, 0.41, 0], SOFA_LEATHER, { roughness: 0.4 }),
+      // tufted backrest
+      box([1.72, 0.42, 0.16], [0, 0.51, -0.32], SOFA_LEATHER, { roughness: 0.4 }),
+      // rolled armrests: body + rounded cap
+      box([0.16, 0.42, 0.74], [-0.8, 0.37, 0], SOFA_LEATHER, { roughness: 0.4 }),
+      box([0.16, 0.42, 0.74], [0.8, 0.37, 0], SOFA_LEATHER, { roughness: 0.4 }),
+      box([0.2, 0.12, 0.78], [-0.8, 0.64, 0], SOFA_LEATHER, { roughness: 0.4 }),
+      box([0.2, 0.12, 0.78], [0.8, 0.64, 0], SOFA_LEATHER, { roughness: 0.4 }),
+      // tufted buttons (2x2 grid on each backrest half)
+      box([0.045, 0.045, 0.02], [-0.555, 0.46, -0.239], SOFA_LEATHER_DARK),
+      box([0.045, 0.045, 0.02], [-0.255, 0.46, -0.239], SOFA_LEATHER_DARK),
+      box([0.045, 0.045, 0.02], [-0.555, 0.6, -0.239], SOFA_LEATHER_DARK),
+      box([0.045, 0.045, 0.02], [-0.255, 0.6, -0.239], SOFA_LEATHER_DARK),
+      box([0.045, 0.045, 0.02], [0.255, 0.46, -0.239], SOFA_LEATHER_DARK),
+      box([0.045, 0.045, 0.02], [0.555, 0.46, -0.239], SOFA_LEATHER_DARK),
+      box([0.045, 0.045, 0.02], [0.255, 0.6, -0.239], SOFA_LEATHER_DARK),
+      box([0.045, 0.045, 0.02], [0.555, 0.6, -0.239], SOFA_LEATHER_DARK),
     ],
   },
   bed: {
