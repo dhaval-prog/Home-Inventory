@@ -10,7 +10,6 @@ import {
   Star,
   AlertTriangle,
   Clock,
-  Lock,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -26,7 +25,6 @@ const ICONS: Record<string, LucideIcon> = {
   Star,
   AlertTriangle,
   Clock,
-  Lock,
   Settings,
 };
 
