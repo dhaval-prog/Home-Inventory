@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Lock, LockOpen } from "lucide-react";
+import { Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getStoredLockerPin } from "@/lib/locker-pin";
+import { LockerVaultBoundary } from "@/components/locker/locker-vault-boundary";
 
 const DIGIT_ROWS = [
   ["1", "2", "3"],
@@ -84,21 +85,7 @@ function Keypad({ storedPin }: { storedPin: string }) {
   }
 
   if (unlocked) {
-    return (
-      <div className="flex flex-col items-center rounded-2xl border border-dashed bg-muted/30 px-6 py-16 text-center">
-        <span className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-          <LockOpen className="size-7" />
-        </span>
-        <h3 className="text-lg font-semibold">Locker unlocked</h3>
-        <p className="mt-1.5 max-w-sm text-sm text-muted-foreground">
-          Nothing stored here yet — this is a placeholder for now.
-        </p>
-        <Button variant="outline" className="mt-6" onClick={() => setUnlocked(false)}>
-          <Lock className="size-4" />
-          Lock again
-        </Button>
-      </div>
-    );
+    return <LockerVaultBoundary onExit={() => setUnlocked(false)} />;
   }
 
   return (
