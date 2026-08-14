@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProfileForm } from "@/components/settings/profile-form";
+import { LockerPinForm } from "@/components/settings/locker-pin-form";
 import { SignOutButton } from "@/components/settings/sign-out-button";
 
 export default async function SettingsPage() {
@@ -24,6 +25,16 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <ProfileForm name={profile?.name ?? ""} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Locker PIN</CardTitle>
+          <CardDescription>Set a 4-digit PIN to protect your Locker section.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LockerPinForm />
         </CardContent>
       </Card>
 
