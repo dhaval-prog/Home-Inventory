@@ -1,6 +1,6 @@
 import { Fragment } from "react";
 import { ChevronRight } from "lucide-react";
-import { getIcon } from "@/lib/icon-map";
+import { getIcon, getCompactIcon } from "@/lib/icon-map";
 import type { LocationNode } from "@/lib/location";
 
 export function LocationPath({
@@ -17,7 +17,7 @@ export function LocationPath({
   return (
     <div className={"flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground " + (className ?? "")}>
       {nodes.map((node, i) => {
-        const Icon = getIcon(node.icon);
+        const Icon = node.type === "room" ? getCompactIcon(node.icon) : getIcon(node.icon);
         return (
           <Fragment key={node.id}>
             {i > 0 && <ChevronRight className="size-3.5 shrink-0 opacity-50" />}

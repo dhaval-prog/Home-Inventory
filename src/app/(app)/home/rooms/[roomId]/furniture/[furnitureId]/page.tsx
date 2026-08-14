@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { ChevronRight, Home as HomeIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { getFurnitureDetail } from "@/lib/furniture-data";
-import { getIcon } from "@/lib/icon-map";
+import { getIcon, getCompactIcon } from "@/lib/icon-map";
 import { AddStorageLocationDialog } from "@/components/home/add-storage-location-dialog";
 import { StorageLocationSection } from "@/components/home/storage-location-section";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -19,7 +19,7 @@ export default async function FurniturePage({
   if (!detail) notFound();
 
   const { home, room, furniture, locations, totalItems } = detail;
-  const RoomIcon = getIcon(room.icon);
+  const RoomIcon = getCompactIcon(room.icon);
   const FurnitureIcon = getIcon(furniture.icon);
 
   return (

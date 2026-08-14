@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronRight, Home as HomeIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
-import { getIcon } from "@/lib/icon-map";
+import { getCompactIcon } from "@/lib/icon-map";
 import { AddFurnitureDialog } from "@/components/home/add-furniture-dialog";
 import { FurnitureCard } from "@/components/home/furniture-card";
 import { RoomTopView } from "@/components/home/room-top-view";
@@ -43,7 +43,7 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
     countByFurniture.set(fId, (countByFurniture.get(fId) ?? 0) + 1);
   }
 
-  const RoomIcon = getIcon(room.icon);
+  const RoomIcon = getCompactIcon(room.icon);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
@@ -72,6 +72,7 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
       {(furniture ?? []).length === 0 ? (
         <EmptyState
           icon={room.icon}
+          isRoomIcon
           title="No furniture yet"
           description="This room is empty. Add your first piece of furniture to start organizing your belongings."
           action={<AddFurnitureDialog roomId={roomId} roomType={room.type as RoomType} />}

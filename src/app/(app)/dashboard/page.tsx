@@ -3,7 +3,7 @@ import { Plus, Search, Home as HomeIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { getDashboardData } from "@/lib/dashboard-data";
 import { getHomeSceneData } from "@/lib/home-scene-data";
-import { getIcon } from "@/lib/icon-map";
+import { getCompactIcon } from "@/lib/icon-map";
 import { HOME_TYPE_META } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -282,7 +282,7 @@ export default async function DashboardPage() {
                 ) : (
                   <ol className="space-y-3">
                     {data.topAreas.map((area, i) => {
-                      const Icon = getIcon(area.icon);
+                      const Icon = getCompactIcon(area.icon);
                       return (
                         <li
                           key={area.furnitureId}

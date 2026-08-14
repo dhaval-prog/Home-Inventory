@@ -98,6 +98,39 @@ export interface PlacedFurniture {
 }
 
 /**
+ * A 90°/270° rotation swaps which footprint axis faces the room's width vs.
+ * depth, so the clamp bounds have to swap with it — otherwise a rotated piece
+ * clamped using its un-rotated half-extents can still poke through a wall.
+ */
+export function rotatedFootprintHalfExtents(type: string, rotationY: number): [number, number] {
+  const [footprintW, footprintD] = getFurnitureRecipe(type).footprint;
+  const swapped = Math.round(rotationY / 90) % 2 !== 0;
+  return swapped ? [footprintD / 2, footprintW / 2] : [footprintW / 2, footprintD / 2];
+}
+
+/**
+ * Clamps a furniture position so its full footprint (not just its center
+ * point) stays inside the room walls, accounting for the piece's own size and
+ * current rotation.
+ */
+export function clampPositionToRoom(
+  type: string,
+  rotationY: number,
+  x: number,
+  z: number,
+  width: number,
+  depth: number
+): { x: number; z: number } {
+  const [halfW, halfD] = rotatedFootprintHalfExtents(type, rotationY);
+  const marginX = Math.max(0, width / 2 - 0.3 - halfW);
+  const marginZ = Math.max(0, depth / 2 - 0.3 - halfD);
+  return {
+    x: Math.max(-marginX, Math.min(marginX, x)),
+    z: Math.max(-marginZ, Math.min(marginZ, z)),
+  };
+}
+
+/**
  * Furniture the user has dragged/rotated into place keeps that spot — from the
  * database once position_x/position_z/rotation_y are set there, or from the
  * local autosave cache in the meantime — so the 2D floor plan and 3D scene
@@ -111,21 +144,18 @@ export function placeFurniture(
   options: { useLocalCache?: boolean } = {}
 ): PlacedFurniture[] {
   const { useLocalCache = true } = options;
-  const marginX = width / 2 - 0.3;
-  const marginZ = depth / 2 - 0.3;
-  const clamp = (x: number, z: number, rotationY: number) => ({
-    x: Math.max(-marginX, Math.min(marginX, x)),
-    z: Math.max(-marginZ, Math.min(marginZ, z)),
+  const clamp = (f: Furniture, x: number, z: number, rotationY: number) => ({
+    ...clampPositionToRoom(f.type, rotationY, x, z, width, depth),
     rotationY,
   });
 
   const resolved = furniture.map((f) => {
     if (f.position_x != null && f.position_z != null) {
-      return { furniture: f, pos: clamp(f.position_x, f.position_z, f.rotation_y ?? 0) };
+      return { furniture: f, pos: clamp(f, f.position_x, f.position_z, f.rotation_y ?? 0) };
     }
     const cached = useLocalCache ? getCachedFurniturePlacement(f.id) : null;
     if (cached) {
-      return { furniture: f, pos: clamp(cached.x, cached.z, cached.rotationY) };
+      return { furniture: f, pos: clamp(f, cached.x, cached.z, cached.rotationY) };
     }
     return { furniture: f, pos: null };
   });

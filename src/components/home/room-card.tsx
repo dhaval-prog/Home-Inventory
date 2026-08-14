@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { getIcon } from "@/lib/icon-map";
+import { getIcon, getCompactIcon } from "@/lib/icon-map";
 import type { RoomWithFurniture } from "@/lib/home-data";
 import { deleteRoom, moveRoom, renameRoom } from "@/lib/actions/homes";
 
@@ -28,7 +28,7 @@ export function RoomCard({
   isLast: boolean;
 }) {
   const { room, furniture, itemCount } = data;
-  const Icon = getIcon(room.icon);
+  const Icon = getCompactIcon(room.icon);
   const [renaming, setRenaming] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [name, setName] = useState(room.name);

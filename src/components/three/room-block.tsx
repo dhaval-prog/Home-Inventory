@@ -6,7 +6,7 @@ import { FurnitureMesh } from "@/components/three/furniture-mesh";
 import { LocationMarker } from "@/components/three/location-marker";
 import { roomFloorColor, ROOM_WALL_COLOR } from "@/lib/three/room-colors";
 import { WALL_HEIGHT, WALL_THICKNESS, placeFurniture } from "@/lib/three/layout";
-import { getIcon } from "@/lib/icon-map";
+import { getCompactIcon } from "@/lib/icon-map";
 import type { Furniture, Room } from "@/lib/supabase/types";
 import type { SceneItemSummary } from "@/lib/home-scene-data";
 
@@ -35,7 +35,7 @@ export function RoomBlock({
 }) {
   const [hovered, setHovered] = useState(false);
   const placed = placeFurniture(furniture, width, depth);
-  const RoomIcon = getIcon(room.icon);
+  const RoomIcon = getCompactIcon(room.icon);
   const floorColor = roomFloorColor(room.type);
   const highlighted = placed.find((p) => p.furniture.id === highlightFurnitureId);
   const roomItemCount = furniture.reduce((sum, f) => sum + (itemsByFurniture?.[f.id]?.length ?? 0), 0);

@@ -10,7 +10,7 @@ import { RotateCw } from "lucide-react";
 import { Vector3, Vector2, Plane, Raycaster, type OrthographicCamera as ThreeOrthographicCamera } from "three";
 import { getIcon } from "@/lib/icon-map";
 import { getFurnitureRecipe } from "@/lib/three/furniture-recipes";
-import { placeFurniture, ROOM_WIDTH, ROOM_DEPTH } from "@/lib/three/layout";
+import { placeFurniture, clampPositionToRoom, ROOM_WIDTH, ROOM_DEPTH } from "@/lib/three/layout";
 import { roomFloorColor } from "@/lib/three/room-colors";
 import { updateFurniturePlacement } from "@/lib/actions/furniture";
 import { setCachedFurniturePlacement } from "@/lib/three/furniture-position-cache";
@@ -37,8 +37,6 @@ interface Placement {
 }
 
 const GROUND_PLANE = new Plane(new Vector3(0, 1, 0), 0);
-const MARGIN_X = ROOM_WIDTH / 2 - 0.3;
-const MARGIN_Z = ROOM_DEPTH / 2 - 0.3;
 const DRAG_THRESHOLD_M = 0.05;
 
 /** Straight-down orthographic camera, framed so the whole room fits regardless of the canvas aspect ratio. */
@@ -185,7 +183,8 @@ function SceneContents({
   function onDragStart(id: string, e: ThreeEvent<PointerEvent>) {
     const start = screenToGround(e.nativeEvent.clientX, e.nativeEvent.clientY);
     const current = placementsRef.current[id];
-    if (!start || !current) return;
+    const item = furniture.find((f) => f.id === id);
+    if (!start || !current || !item) return;
 
     const drag = { startX: current.x, startZ: current.z, startPoint: start, moved: false };
 
@@ -197,8 +196,14 @@ function SceneContents({
       if (!drag.moved && (Math.abs(dx) > DRAG_THRESHOLD_M || Math.abs(dz) > DRAG_THRESHOLD_M)) {
         drag.moved = true;
       }
-      const nextX = Math.max(-MARGIN_X, Math.min(MARGIN_X, drag.startX + dx));
-      const nextZ = Math.max(-MARGIN_Z, Math.min(MARGIN_Z, drag.startZ + dz));
+      const { x: nextX, z: nextZ } = clampPositionToRoom(
+        item!.type,
+        current.rotationY,
+        drag.startX + dx,
+        drag.startZ + dz,
+        ROOM_WIDTH,
+        ROOM_DEPTH
+      );
       setPlacements((prev) => ({ ...prev, [id]: { ...prev[id], x: nextX, z: nextZ } }));
     }
 
@@ -223,8 +228,11 @@ function SceneContents({
 
   function onRotate(id: string) {
     const current = placementsRef.current[id];
-    if (!current) return;
-    const next = { ...current, rotationY: (current.rotationY + 90) % 360 };
+    const item = furniture.find((f) => f.id === id);
+    if (!current || !item) return;
+    const rotationY = (current.rotationY + 90) % 360;
+    const { x, z } = clampPositionToRoom(item.type, rotationY, current.x, current.z, ROOM_WIDTH, ROOM_DEPTH);
+    const next = { x, z, rotationY };
     setPlacements((prev) => ({ ...prev, [id]: next }));
     setCachedFurniturePlacement(id, next.x, next.z, next.rotationY);
     onPersist(id, next);
