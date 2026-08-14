@@ -64,17 +64,21 @@ export function Rain({
     mesh.visible = active;
     if (!active) return;
 
+    // Section 14: the same global wind scalar that sways trees/grass also
+    // slants the rain further in a storm's gusts, rather than a fixed drift.
+    const windX = WIND_X * (0.5 + env.windStrength * 1.1);
+
     for (let i = 0; i < drops.length; i++) {
       const d = drops[i];
       d.y -= d.speed * delta;
-      d.x += WIND_X * delta;
+      d.x += windX * delta;
       if (d.y < 0) {
         d.y = topY;
         d.x = (Math.random() - 0.5) * area;
         d.z = (Math.random() - 0.5) * area;
       }
       dummy.position.set(center[0] + d.x, d.y, center[1] + d.z);
-      dummy.rotation.z = -Math.atan2(WIND_X, d.speed);
+      dummy.rotation.z = -Math.atan2(windX, d.speed);
       dummy.scale.set(1, d.length, 1);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);

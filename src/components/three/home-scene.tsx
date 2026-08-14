@@ -10,6 +10,8 @@ import { SkyDome } from "@/components/three/sky-dome";
 import { Clouds } from "@/components/three/clouds";
 import { Rain, Lightning } from "@/components/three/rain";
 import { DynamicLights, HouseLights, OutdoorLights, SceneAtmosphere } from "@/components/three/environment-lighting";
+import { GroundDetail, Trees, yardPadHalf } from "@/components/three/vegetation";
+import { Butterflies, Dogs, Fireflies } from "@/components/three/critters";
 import { useEnvironment } from "@/lib/three/use-environment";
 import type { EnvironmentTarget, WeatherCondition } from "@/lib/three/environment";
 import { computeRoomLayout, layoutBounds } from "@/lib/three/layout";
@@ -130,42 +132,24 @@ interface SceneBounds {
   radius: number;
 }
 
-/** A small tree: cylinder trunk + a couple of stacked cone/sphere tops. Cute, low-poly. */
-function Tree({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
-  return (
-    <group position={position} scale={scale}>
-      <mesh position={[0, 0.3, 0]} castShadow>
-        <cylinderGeometry args={[0.07, 0.09, 0.6, 8]} />
-        <meshStandardMaterial color="#8a6444" roughness={0.9} />
-      </mesh>
-      <mesh position={[0, 0.85, 0]} castShadow>
-        <coneGeometry args={[0.42, 0.7, 10]} />
-        <meshStandardMaterial color="#5f9155" roughness={0.85} />
-      </mesh>
-      <mesh position={[0, 1.15, 0]} castShadow>
-        <coneGeometry args={[0.3, 0.55, 10]} />
-        <meshStandardMaterial color="#79ab68" roughness={0.85} />
-      </mesh>
-    </group>
-  );
-}
-
-function Bush({ position }: { position: [number, number, number] }) {
-  return (
-    <mesh position={[position[0], 0.18, position[2]]} castShadow>
-      <sphereGeometry args={[0.22, 10, 10]} />
-      <meshStandardMaterial color="#6f9c5e" roughness={0.9} />
-    </mesh>
-  );
-}
-
 /**
  * Dresses the scene as a small house sitting on its own plot: a grass field, a raised
  * cream foundation pad sized to the room layout, a low picket fence around the plot,
- * and a few corner trees/bushes — evoking a "mini home" diorama without capping the
- * rooms with a roof (which would hide the furniture the rest of the app needs visible).
+ * naturally-scattered trees/ground detail, and daytime/nighttime wildlife — evoking a
+ * "mini home" diorama without capping the rooms with a roof (which would hide the
+ * furniture the rest of the app needs visible).
  */
-function Yard({ bounds, envRef }: { bounds: SceneBounds; envRef: MutableRefObject<EnvironmentTarget> }) {
+function Yard({
+  bounds,
+  envRef,
+  weather,
+  mobile,
+}: {
+  bounds: SceneBounds;
+  envRef: MutableRefObject<EnvironmentTarget>;
+  weather: WeatherCondition;
+  mobile: boolean;
+}) {
   const grassRef = useRef<Mesh>(null);
   const padRef = useRef<Mesh>(null);
   const grassDryColor = useMemo(() => new Color("#8fbf6a"), []);
@@ -187,7 +171,7 @@ function Yard({ bounds, envRef }: { bounds: SceneBounds; envRef: MutableRefObjec
     }
   });
 
-  const padHalf = (bounds.radius * 1.18) / 2;
+  const padHalf = yardPadHalf(bounds.radius);
   const fenceHalf = padHalf + 0.55;
   const fencePosts = useMemo(() => {
     const posts: [number, number, number][] = [];
@@ -201,13 +185,6 @@ function Yard({ bounds, envRef }: { bounds: SceneBounds; envRef: MutableRefObjec
     }
     return posts;
   }, [bounds.centerX, bounds.centerZ, fenceHalf]);
-
-  const treeCorners: [number, number, number][] = [
-    [bounds.centerX - fenceHalf - 0.4, 0, bounds.centerZ - fenceHalf - 0.4],
-    [bounds.centerX + fenceHalf + 0.4, 0, bounds.centerZ - fenceHalf - 0.5],
-    [bounds.centerX - fenceHalf - 0.5, 0, bounds.centerZ + fenceHalf + 0.4],
-    [bounds.centerX + fenceHalf + 0.45, 0, bounds.centerZ + fenceHalf + 0.45],
-  ];
 
   return (
     <>
@@ -231,7 +208,11 @@ function Yard({ bounds, envRef }: { bounds: SceneBounds; envRef: MutableRefObjec
         </mesh>
       ))}
 
-      {treeCorners.map((p, i) => (i % 2 === 0 ? <Tree key={i} position={p} scale={0.9 + (i % 3) * 0.1} /> : <Bush key={i} position={p} />))}
+      <GroundDetail bounds={bounds} envRef={envRef} mobile={mobile} />
+      <Trees bounds={bounds} envRef={envRef} mobile={mobile} />
+      <Butterflies bounds={bounds} envRef={envRef} mobile={mobile} />
+      <Fireflies bounds={bounds} envRef={envRef} mobile={mobile} />
+      <Dogs bounds={bounds} envRef={envRef} weather={weather} mobile={mobile} />
     </>
   );
 }
@@ -306,7 +287,7 @@ function SceneContents({
       <HouseLights envRef={envRef} layout={layout} />
       <OutdoorLights envRef={envRef} bounds={bounds} />
 
-      <Yard bounds={bounds} envRef={envRef} />
+      <Yard bounds={bounds} envRef={envRef} weather={weather ?? "sunny"} mobile={mobile} />
 
       {!mobile && (
         <ContactShadows

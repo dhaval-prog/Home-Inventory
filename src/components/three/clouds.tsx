@@ -56,6 +56,7 @@ function CloudLayer({
   opacityScale: number;
 }) {
   const groupRef = useRef<Group>(null);
+  const angle = useRef(0);
   const puffs = useMemo(() => makePuffs(count, layerRadius, seed), [count, layerRadius, seed]);
   // One material shared by every part in this layer — they all animate
   // identically (same opacity/color target), so there's no need for N
@@ -69,16 +70,21 @@ function CloudLayer({
   // reallocating a Material every frame; same established r3f pattern as the
   // scene's other environment-driven refs.
   /* eslint-disable react-hooks/immutability */
-  useFrame(({ clock }) => {
+  useFrame((_, delta) => {
+    const env = envRef.current;
     if (groupRef.current) {
-      groupRef.current.rotation.y = clock.elapsedTime * speed;
+      // Wind picks up cloud drift speed (section 14) — accumulated via delta
+      // rather than derived straight from clock.elapsedTime, so a change in
+      // windStrength speeds/slows the drift smoothly instead of jumping the
+      // clouds to a new angle.
+      angle.current += speed * (0.6 + env.windStrength * 0.8) * delta;
+      groupRef.current.rotation.y = angle.current;
       groupRef.current.position.set(center[0], height, center[1]);
     }
     // env.cloudOpacity is already smoothed frame-rate-independently by
     // useEnvironment — assigning it directly here (rather than lerping
     // toward it a second time with a fixed per-frame step) avoids a
     // transition that's implicitly tied to frame rate rather than time.
-    const env = envRef.current;
     material.opacity = env.cloudOpacity * opacityScale;
     // Heavy coverage (overcast/storm) should read as brooding grey, not
     // bright white — blend toward the environment's precomputed dark-cloud

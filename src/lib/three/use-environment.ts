@@ -50,6 +50,9 @@ export function useEnvironment(weather: WeatherReading, timeOverrideHour?: numbe
 
     c.hour = g.hour;
     c.isNight = g.isNight;
+    c.dayAmount = lerpNum(c.dayAmount, g.dayAmount, t);
+    c.nightAmount = lerpNum(c.nightAmount, g.nightAmount, t);
+    c.windStrength = lerpNum(c.windStrength, g.windStrength, t);
     c.sunElevation = lerpNum(c.sunElevation, g.sunElevation, t);
     c.sunAzimuth = lerpNum(c.sunAzimuth, g.sunAzimuth, t);
     c.sunDirection[0] = lerpNum(c.sunDirection[0], g.sunDirection[0], t);

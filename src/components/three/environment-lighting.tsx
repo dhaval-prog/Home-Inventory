@@ -3,7 +3,7 @@
 import { useMemo, useRef } from "react";
 import type { MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import type { AmbientLight, DirectionalLight, Fog, HemisphereLight, PointLight } from "three";
+import { Color, type AmbientLight, type DirectionalLight, type Fog, type HemisphereLight, type Mesh, type MeshStandardMaterial, type PointLight } from "three";
 import { GlowSprite } from "@/components/three/glow-sprite";
 import type { EnvironmentTarget } from "@/lib/three/environment";
 
@@ -141,31 +141,77 @@ export function HouseLights({
   );
 }
 
+/** A slim modern residential lamp post: dark pole, small warm fixture, and a soft light pool on the ground that brightens/spreads when the ground is wet. */
 function OutdoorLight({ envRef, x, z }: { envRef: MutableRefObject<EnvironmentTarget>; x: number; z: number }) {
   const lightRef = useRef<PointLight>(null);
+  const bulbRef = useRef<Mesh>(null);
+  const poolRef = useRef<Mesh>(null);
+  const poolMatRef = useRef<MeshStandardMaterial>(null);
+  const poolDry = useMemo(() => new Color("#ffcf8a"), []);
+  const poolWet = useMemo(() => new Color("#fff2d6"), []);
+
+   
   useFrame(() => {
-    if (lightRef.current) lightRef.current.intensity = envRef.current.outdoorLightIntensity * 0.6;
+    const env = envRef.current;
+    const intensity = env.outdoorLightIntensity;
+    if (lightRef.current) lightRef.current.intensity = intensity * 0.6;
+    if (bulbRef.current) {
+      const mat = bulbRef.current.material as MeshStandardMaterial;
+      mat.emissiveIntensity = intensity * 1.4;
+    }
+    if (poolRef.current && poolMatRef.current) {
+      // Rain pools light around the base of each lamp rather than staying a
+      // tight dry circle — a cheap stand-in for a wet-ground reflection.
+      const wetSpread = 1 + env.groundWetness * 0.6;
+      poolRef.current.scale.set(wetSpread, wetSpread, 1);
+      poolMatRef.current.opacity = intensity * (0.22 + env.groundWetness * 0.2);
+      poolMatRef.current.color.copy(poolDry).lerp(poolWet, env.groundWetness);
+    }
   });
+   
+
   return (
-    <>
-      <pointLight ref={lightRef} position={[x, 0.55, z]} color="#ffcf8a" intensity={0} distance={2.5} decay={2} />
+    <group position={[x, 0, z]}>
+      {/* Ground light pool */}
+      <mesh ref={poolRef} position={[0, 0.008, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.5, 20]} />
+        <meshStandardMaterial ref={poolMatRef} color="#ffcf8a" transparent opacity={0} depthWrite={false} roughness={1} />
+      </mesh>
+
+      {/* Slim pole */}
+      <mesh position={[0, 0.28, 0]} castShadow>
+        <cylinderGeometry args={[0.018, 0.022, 0.56, 8]} />
+        <meshStandardMaterial color="#2b2c33" roughness={0.6} metalness={0.3} />
+      </mesh>
+      {/* Small fixture housing */}
+      <mesh position={[0, 0.58, 0]} castShadow>
+        <coneGeometry args={[0.05, 0.08, 8]} />
+        <meshStandardMaterial color="#2b2c33" roughness={0.6} metalness={0.3} />
+      </mesh>
+      {/* Warm bulb — self-illuminated via emissive so it visibly glows even before the point light/GlowSprite bloom kicks in */}
+      <mesh ref={bulbRef} position={[0, 0.53, 0]}>
+        <sphereGeometry args={[0.032, 10, 8]} />
+        <meshStandardMaterial color="#3a2c18" emissive="#ffcf8a" emissiveIntensity={0} roughness={0.5} />
+      </mesh>
+
+      <pointLight ref={lightRef} position={[0, 0.55, 0]} color="#ffcf8a" intensity={0} distance={2.5} decay={2} />
       <GlowSprite
-        position={[x, 0.55, z]}
+        position={[0, 0.55, 0]}
         color="#ffcf8a"
         size={0.35}
         envRef={envRef}
         select={(e) => e.outdoorLightIntensity}
         maxOpacity={0.5}
       />
-    </>
+    </group>
   );
 }
 
-/** A handful of warm path/garden lights around the yard perimeter, on at night. */
+/** Elegant residential lamp posts around the yard perimeter/boundary — off by day, gradually glowing on at dusk (section 8-11). */
 export function OutdoorLights({ envRef, bounds }: { envRef: MutableRefObject<EnvironmentTarget>; bounds: Bounds }) {
   const positions = useMemo(() => {
     const r = bounds.radius * 1.25;
-    const count = 6;
+    const count = 8;
     return Array.from({ length: count }, (_, i) => {
       const a = (i / count) * Math.PI * 2;
       return [bounds.centerX + Math.cos(a) * r, bounds.centerZ + Math.sin(a) * r] as [number, number];

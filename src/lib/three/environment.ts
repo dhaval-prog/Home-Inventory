@@ -17,6 +17,12 @@ export interface EnvironmentTarget {
   /** Decimal hour 0-24 used to derive this target (for reference/debugging). */
   hour: number;
   isNight: boolean;
+  /** Continuous 0 (night) .. 1 (full day) — drives butterfly/dog/streetlight fades smoothly, unlike the binary isNight flag. */
+  dayAmount: number;
+  /** Continuous 0 (day) .. 1 (deep night) — drives firefly/star/moon-adjacent fades. */
+  nightAmount: number;
+  /** 0-1 global wind scalar (calm sunny days low, storms high) — trees/grass/butterflies/clouds/rain all read this one value so wind cohesively picks up together. */
+  windStrength: number;
   /** -1 (midnight) .. 1 (solar noon), 0 at sunrise/sunset. */
   sunElevation: number;
   sunAzimuth: number;
@@ -135,9 +141,19 @@ export function computeEnvironmentTarget(date: Date, weather: WeatherReading): E
 
   const bgColor = skyHorizonColor.clone().lerp(hemiGroundColor, 0.15);
 
+  // One shared wind scalar: mild on a still sunny day, picking up through
+  // cloud cover, stronger in rain, strongest in a storm's gusts — every wind-
+  // reactive element (trees, grass, butterflies, cloud drift, rain slant)
+  // reads this same value so they all pick up together instead of each
+  // inventing its own notion of "windy."
+  const windStrength = clamp01(0.12 + cloudCoverage * 0.22 + weatherDefaults.rain * 0.35 + (weatherDefaults.lightning ? 0.25 : 0));
+
   return {
     hour,
     isNight,
+    dayAmount,
+    nightAmount,
+    windStrength,
     sunElevation,
     sunAzimuth,
     sunDirection,
