@@ -23,11 +23,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const name = profile?.name || user.email?.split("@")[0] || "there";
 
   return (
-    <div className="flex min-h-svh">
+    <div className="radiant-bg flex min-h-svh text-[#0b0b14]">
       <Sidebar homeName={homes?.[0]?.name} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header name={name} email={user.email ?? ""} />
-        <main className="flex-1 pb-24 md:pb-8">{children}</main>
+        <main className="flex-1 pb-28 md:pb-8">{children}</main>
       </div>
       <BottomNav />
       <Toaster />

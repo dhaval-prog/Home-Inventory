@@ -45,7 +45,7 @@ export function HeaderSearch({ className }: { className?: string }) {
           if (query.trim()) go(query.trim());
         }}
       >
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           value={query}
           onChange={(e) => {
@@ -55,7 +55,7 @@ export function HeaderSearch({ className }: { className?: string }) {
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           placeholder="What are you looking for?"
-          className="pl-9"
+          className="h-10 rounded-full border-white/90 bg-white/70 pl-9.5 backdrop-blur-md"
         />
       </form>
       {open && suggestions.length > 0 && (

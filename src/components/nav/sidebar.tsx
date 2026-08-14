@@ -32,19 +32,17 @@ export function Sidebar({ homeName }: { homeName?: string }) {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden w-64 shrink-0 flex-col border-r bg-sidebar px-4 py-6 md:flex">
-      <Link href="/dashboard" className="mb-6 flex items-center gap-2 px-2 text-lg font-semibold tracking-tight">
-        <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <Home className="size-4" />
+    <aside className="hidden w-64 shrink-0 flex-col gap-5 border-r border-white/70 bg-white/55 px-4 py-5 backdrop-blur-xl md:flex">
+      <Link href="/dashboard" className="flex items-center gap-2.5 px-2 text-base font-semibold tracking-tight">
+        <span className="flex size-[30px] items-center justify-center rounded-full bg-primary text-primary-foreground">
+          <Home className="size-3.5" />
         </span>
         Home Inventory
       </Link>
 
-      <div className="mb-4 px-2">
-        <QuickAddMenu className="w-full justify-start" />
-      </div>
+      <QuickAddMenu className="w-full justify-start rounded-full px-4" />
 
-      <nav className="flex flex-1 flex-col gap-1">
+      <nav className="flex flex-1 flex-col gap-0.5">
         {NAV_ITEMS.map((item) => {
           const Icon = ICONS[item.icon];
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
@@ -53,10 +51,10 @@ export function Sidebar({ homeName }: { homeName?: string }) {
               key={item.href}
               href={item.href}
               className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                "flex items-center gap-2.5 rounded-full px-3.5 py-2 text-[13.5px] font-medium transition-colors",
                 active
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  ? "bg-white text-foreground shadow-sm"
+                  : "text-foreground/65 hover:bg-white/50 hover:text-foreground"
               )}
             >
               <Icon className="size-4" />

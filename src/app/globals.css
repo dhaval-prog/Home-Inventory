@@ -49,6 +49,8 @@
 }
 
 :root {
+  --font-sans: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+  --radiant-gradient: linear-gradient(135deg, #fdf3c8 0%, #fbdcc4 25%, #f4a8cf 62%, #c9a1f0 100%);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -126,5 +128,14 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+@layer components {
+  .radiant-bg {
+    background-image: var(--radiant-gradient);
+  }
+  .glass-panel {
+    @apply border border-white/80 bg-white/70 shadow-[0_12px_40px_rgba(11,11,20,0.08)] backdrop-blur-xl;
   }
 }

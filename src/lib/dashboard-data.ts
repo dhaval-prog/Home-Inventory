@@ -26,7 +26,7 @@ export interface DashboardData {
   homes: HomeStats[];
   recentItems: RecentItem[];
   topAreas: StorageAreaUsage[];
-  totals: { rooms: number; furniture: number; items: number; categories: number };
+  totals: { rooms: number; furniture: number; items: number; categories: number; noPhoto: number };
 }
 
 export async function getDashboardData(supabase: SupabaseClient<Database>): Promise<DashboardData> {
@@ -103,6 +103,7 @@ export async function getDashboardData(supabase: SupabaseClient<Database>): Prom
       furniture: index.furniture.size,
       items: items.length,
       categories: categories.size,
+      noPhoto: items.filter((i) => !i.photo_url).length,
     },
   };
 }

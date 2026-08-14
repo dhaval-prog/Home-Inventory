@@ -5,9 +5,9 @@ import { UserMenu } from "@/components/nav/user-menu";
 
 export function Header({ name, email }: { name: string; email: string }) {
   return (
-    <header className="sticky top-0 z-30 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur md:px-6">
+    <header className="sticky top-0 z-30 flex items-center gap-3 px-4 py-3 md:px-6 md:py-4">
       <Link href="/dashboard" className="flex items-center gap-2 font-semibold md:hidden">
-        <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+        <span className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
           <Home className="size-4" />
         </span>
       </Link>
@@ -16,7 +16,7 @@ export function Header({ name, email }: { name: string; email: string }) {
 
       <Link
         href="/search"
-        className="ml-auto flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted md:hidden"
+        className="ml-auto flex size-9 items-center justify-center rounded-full text-foreground/60 hover:bg-white/50 md:hidden"
       >
         <Search className="size-5" />
       </Link>
