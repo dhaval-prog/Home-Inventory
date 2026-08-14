@@ -10,7 +10,7 @@ import { AddRoomDialog } from "@/components/home/add-room-dialog";
 import { DeleteHomeDialog } from "@/components/home/delete-home-dialog";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
-import { Plus, Star, AlertTriangle, Clock } from "lucide-react";
+import { Plus, Star, AlertTriangle } from "lucide-react";
 
 function greeting() {
   const hour = new Date().getHours();
@@ -104,12 +104,6 @@ export default async function HomePage({
             <Button variant="outline" size="sm" className="border-[#0b0b14]/12 bg-white">
               <AlertTriangle className="size-4" />
               Important
-            </Button>
-          </Link>
-          <Link href="/recent">
-            <Button variant="outline" size="sm" className="border-[#0b0b14]/12 bg-white">
-              <Clock className="size-4" />
-              Recently Added
             </Button>
           </Link>
         </div>
