@@ -13,6 +13,7 @@ import { relativeDay } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SeedDemoButton } from "@/components/shared/seed-demo-button";
 import { DashboardHomeScene } from "@/components/home/dashboard-home-scene";
+import { AddRoomDialog } from "@/components/home/add-room-dialog";
 
 const ICON_BADGE_GRADIENTS = [
   "from-[#fdf3c8] to-[#f4a8cf]",
@@ -130,16 +131,30 @@ export default async function DashboardPage() {
                             </Badge>
                           </div>
                         </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="border-[#0b0b14]/12 bg-white"
-                          render={
-                            <Link href={`/home?id=${home.id}&manage=1`}>
-                              Manage
-                            </Link>
-                          }
-                        />
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-[#0b0b14]/12 bg-white"
+                            render={
+                              <Link href="/home/new">
+                                <Plus className="size-4" />
+                                New Home
+                              </Link>
+                            }
+                          />
+                          <AddRoomDialog homeId={home.id} />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-[#0b0b14]/12 bg-white"
+                            render={
+                              <Link href={`/home?id=${home.id}&manage=1`}>
+                                Manage
+                              </Link>
+                            }
+                          />
+                        </div>
                       </CardHeader>
                       <CardContent className="mt-3.5 space-y-3.5 p-0">
                         {roomCount > 0 && sceneDataByHome[home.id] ? (

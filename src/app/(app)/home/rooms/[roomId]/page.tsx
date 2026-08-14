@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getIcon } from "@/lib/icon-map";
 import { AddFurnitureDialog } from "@/components/home/add-furniture-dialog";
 import { FurnitureCard } from "@/components/home/furniture-card";
-import { RoomFloorPlan2D } from "@/components/home/room-floor-plan-2d";
+import { RoomTopView } from "@/components/home/room-top-view";
 import { EmptyState } from "@/components/shared/empty-state";
 import type { RoomType } from "@/lib/constants";
 
@@ -78,7 +78,7 @@ export default async function RoomPage({ params }: { params: Promise<{ roomId: s
         />
       ) : (
         <>
-          <RoomFloorPlan2D
+          <RoomTopView
             room={room}
             furniture={furniture ?? []}
             itemCountByFurniture={Object.fromEntries(countByFurniture)}

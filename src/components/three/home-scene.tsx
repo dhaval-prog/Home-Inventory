@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { ContactShadows, OrbitControls } from "@react-three/drei";
@@ -32,7 +32,9 @@ function isMobileViewport() {
  * view) skips the flight entirely and starts right at rest — so the auto-rotate is
  * visibly spinning from the very first frame instead of reading as a static image
  * while a flight plays out. Either way, OrbitControls keeps a slow idle auto-rotate
- * going so the scene stays "alive" — auto-rotate stops for good once the user takes control.
+ * going so the scene stays "alive" — it pauses while the user is actively dragging
+ * and resumes on its own a couple of seconds after they let go, rather than
+ * stopping for good the first time someone touches the scene.
  */
 function CameraRig({
   introPosition,
@@ -55,6 +57,13 @@ function CameraRig({
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
   const animating = useRef(fly);
   const [autoRotate, setAutoRotate] = useState(true);
+  const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resumeTimer.current) clearTimeout(resumeTimer.current);
+    };
+  }, []);
 
   useLayoutEffect(() => {
     if (fly) {
@@ -94,7 +103,13 @@ function CameraRig({
       dampingFactor={0.1}
       autoRotate={autoRotate}
       autoRotateSpeed={0.6}
-      onStart={() => setAutoRotate(false)}
+      onStart={() => {
+        if (resumeTimer.current) clearTimeout(resumeTimer.current);
+        setAutoRotate(false);
+      }}
+      onEnd={() => {
+        resumeTimer.current = setTimeout(() => setAutoRotate(true), 2500);
+      }}
     />
   );
 }
