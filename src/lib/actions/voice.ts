@@ -1,11 +1,12 @@
 "use server";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { buildLocationIndex, pathForStorageLocation, type LocationIndex, type LocationNode } from "@/lib/location";
 import { parseTranscript } from "@/lib/voice/nlu";
 import { fuzzyMatchByName } from "@/lib/voice/synonyms";
 import type { ParsedAddEntities } from "@/lib/voice/types";
-import type { Item } from "@/lib/supabase/types";
+import type { Database, Item, StorageLocation } from "@/lib/supabase/types";
 
 export interface VoiceSearchResult {
   kind: "search";
@@ -59,11 +60,84 @@ function scoreItemAgainstTerms(item: Item, terms: string[]): number {
   return best;
 }
 
-function resolveAddLocation(
+function titleCaseWords(text: string): string {
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function pickDefaultStorageLocation(candidates: StorageLocation[]): StorageLocation | null {
+  if (candidates.length === 0) return null;
+  return [...candidates].sort((a, b) => a.sort_order - b.sort_order)[0];
+}
+
+/**
+ * Every item needs a storage_location_id (DB constraint), but voice add
+ * shouldn't stall the user with "which shelf, drawer, or section?" — pick
+ * the furniture's first storage location automatically, creating one named
+ * "General" on the rare furniture that somehow has none at all.
+ */
+async function resolveOrCreateDefaultStorage(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  furnitureId: string,
+  candidates: StorageLocation[]
+): Promise<{ id: string; name: string } | null> {
+  const existing = pickDefaultStorageLocation(candidates);
+  if (existing) return { id: existing.id, name: existing.name };
+
+  const { data: created } = await supabase
+    .from("storage_locations")
+    .insert({ user_id: userId, furniture_id: furnitureId, name: "General", type: "shelf", sort_order: 0 })
+    .select()
+    .single();
+  return created ? { id: created.id, name: created.name } : null;
+}
+
+/**
+ * The user named a furniture piece that doesn't already exist — rather than
+ * asking "which furniture?", create it under the generic "Other" category
+ * using exactly the name they spoke, with a default "General" storage
+ * location so the item has somewhere to land immediately.
+ */
+async function createFurnitureFromSpokenName(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  roomId: string,
+  spokenName: string
+): Promise<{ id: string; name: string; storage: { id: string; name: string } | null } | null> {
+  const { count } = await supabase
+    .from("furniture")
+    .select("id", { count: "exact", head: true })
+    .eq("room_id", roomId);
+  const { data: furniture } = await supabase
+    .from("furniture")
+    .insert({
+      user_id: userId,
+      room_id: roomId,
+      name: titleCaseWords(spokenName),
+      type: "other",
+      icon: "Package",
+      sort_order: count ?? 0,
+    })
+    .select()
+    .single();
+  if (!furniture) return null;
+
+  const storage = await resolveOrCreateDefaultStorage(supabase, userId, furniture.id, []);
+  return { id: furniture.id, name: furniture.name, storage };
+}
+
+async function resolveAddLocation(
+  supabase: SupabaseClient<Database>,
+  userId: string,
   add: ParsedAddEntities,
   index: LocationIndex,
   contextRoomId?: string
-): ResolvedLocation {
+): Promise<ResolvedLocation> {
   const rooms = Array.from(index.rooms.values());
   let room = add.roomPhrase ? fuzzyMatchByName(add.roomPhrase, rooms) : null;
   if (!room && !add.roomPhrase && contextRoomId) {
@@ -72,30 +146,50 @@ function resolveAddLocation(
 
   const allFurniture = Array.from(index.furniture.values());
   const furnitureCandidates = room ? allFurniture.filter((f) => f.room_id === room!.id) : allFurniture;
-  const furniture = add.furniturePhrase ? fuzzyMatchByName(add.furniturePhrase, furnitureCandidates) : null;
+  const matchedFurniture = add.furniturePhrase ? fuzzyMatchByName(add.furniturePhrase, furnitureCandidates) : null;
 
-  const resolvedRoom = room ?? (furniture ? (index.rooms.get(furniture.room_id) ?? null) : null);
+  const resolvedRoom = room ?? (matchedFurniture ? (index.rooms.get(matchedFurniture.room_id) ?? null) : null);
 
-  const allStorage = Array.from(index.storageLocations.values());
-  const storageCandidates = furniture ? allStorage.filter((s) => s.furniture_id === furniture.id) : allStorage;
-  const storage = add.storagePhrase ? fuzzyMatchByName(add.storagePhrase, storageCandidates) : null;
+  let furnitureId = matchedFurniture?.id ?? null;
+  let furnitureName = matchedFurniture?.name ?? null;
+  let storage: { id: string; name: string } | null = null;
+
+  if (!matchedFurniture && add.furniturePhrase && resolvedRoom) {
+    const created = await createFurnitureFromSpokenName(supabase, userId, resolvedRoom.id, add.furniturePhrase);
+    if (created) {
+      furnitureId = created.id;
+      furnitureName = created.name;
+      storage = created.storage;
+    }
+  } else if (matchedFurniture) {
+    const allStorage = Array.from(index.storageLocations.values());
+    const storageCandidates = allStorage.filter((s) => s.furniture_id === matchedFurniture.id);
+    const matchedStorage = add.storagePhrase ? fuzzyMatchByName(add.storagePhrase, storageCandidates) : null;
+    storage = matchedStorage
+      ? { id: matchedStorage.id, name: matchedStorage.name }
+      : await resolveOrCreateDefaultStorage(supabase, userId, matchedFurniture.id, storageCandidates);
+  }
 
   return {
     roomId: resolvedRoom?.id ?? null,
     roomName: resolvedRoom?.name ?? null,
-    furnitureId: furniture?.id ?? null,
-    furnitureName: furniture?.name ?? null,
+    furnitureId,
+    furnitureName,
     storageLocationId: storage?.id ?? null,
     storageLocationName: storage?.name ?? null,
   };
 }
 
+/**
+ * Storage location is deliberately never a blocking question (section: voice
+ * add should default rather than stall) — resolveAddLocation/resolveVoiceSlot
+ * always resolve or create one alongside furniture.
+ */
 function missingFieldsFor(itemName: string | null, location: ResolvedLocation): MissingField[] {
   const missing: MissingField[] = [];
   if (!itemName) missing.push("itemName");
   if (!location.roomId) missing.push("room");
   else if (!location.furnitureId) missing.push("furniture");
-  else if (!location.storageLocationId) missing.push("storageLocation");
   return missing;
 }
 
@@ -142,7 +236,11 @@ export async function processVoiceCommand(
   }
 
   if (nlu.intent === "add") {
-    const location = resolveAddLocation(nlu.add, index, context?.roomId);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { kind: "unclear", transcript };
+    const location = await resolveAddLocation(supabase, user.id, nlu.add, index, context?.roomId);
     return {
       kind: "add",
       itemName: nlu.add.itemNameRaw,
@@ -179,11 +277,36 @@ export async function resolveVoiceSlot(
     const all = Array.from(index.furniture.values());
     const candidates = parent.roomId ? all.filter((f) => f.room_id === parent.roomId) : all;
     const match = fuzzyMatchByName(cleanedPhrase, candidates);
-    return match ? { id: match.id, name: match.name } : null;
+    if (match) return { id: match.id, name: match.name };
+
+    // They named a furniture piece that doesn't exist — create it under
+    // "Other" with the spoken name rather than reporting a match failure.
+    if (!parent.roomId) return null;
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return null;
+    const created = await createFurnitureFromSpokenName(supabase, user.id, parent.roomId, cleanedPhrase);
+    return created ? { id: created.id, name: created.name } : null;
   }
 
   const all = Array.from(index.storageLocations.values());
   const candidates = parent.furnitureId ? all.filter((s) => s.furniture_id === parent.furnitureId) : all;
   const match = fuzzyMatchByName(cleanedPhrase, candidates);
   return match ? { id: match.id, name: match.name } : null;
+}
+
+/**
+ * Fetches (or creates, if this furniture somehow has none) the default
+ * storage location for a piece of furniture — used after a follow-up
+ * resolves "which furniture?" so storage never becomes a second question.
+ */
+export async function getDefaultStorageLocation(furnitureId: string): Promise<{ id: string; name: string } | null> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { data: candidates } = await supabase.from("storage_locations").select("*").eq("furniture_id", furnitureId);
+  return resolveOrCreateDefaultStorage(supabase, user.id, furnitureId, candidates ?? []);
 }

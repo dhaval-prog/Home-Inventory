@@ -14,6 +14,7 @@ import { searchSuggestions } from "@/lib/actions/search";
 import { listHomes } from "@/lib/actions/browse";
 import { createItemFromVoice } from "@/lib/actions/items";
 import {
+  getDefaultStorageLocation,
   processVoiceCommand,
   resolveVoiceSlot,
   type MissingField,
@@ -56,12 +57,15 @@ function lightTitleCase(text: string): string {
     .join(" ");
 }
 
+// Storage location is never a blocking question here — the server actions
+// (resolveAddLocation/resolveVoiceSlot/getDefaultStorageLocation) always
+// resolve or auto-create one alongside furniture, so voice add never stalls
+// on "which shelf, drawer, or section?".
 function recomputeMissing(itemName: string | null, location: ResolvedLocation): MissingField[] {
   const missing: MissingField[] = [];
   if (!itemName) missing.push("itemName");
   if (!location.roomId) missing.push("room");
   else if (!location.furnitureId) missing.push("furniture");
-  else if (!location.storageLocationId) missing.push("storageLocation");
   return missing;
 }
 
@@ -192,11 +196,23 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
       });
       return;
     }
-    applySlotResolution(current, field, resolved.id, resolved.name);
+    await applySlotResolution(current, field, resolved.id, resolved.name);
   }
 
-  function applySlotResolution(current: Extract<Phase, { kind: "add-flow" }>, field: MissingField, id: string, name: string) {
-    const newLocation = withField(current.location, field, id, name);
+  async function applySlotResolution(
+    current: Extract<Phase, { kind: "add-flow" }>,
+    field: MissingField,
+    id: string,
+    name: string
+  ) {
+    let newLocation = withField(current.location, field, id, name);
+    // Resolving furniture never leaves storage unset — it's the one field
+    // voice add always defaults rather than asking about (matches
+    // resolveAddLocation's behavior for the initial command).
+    if (field === "furniture") {
+      const storage = await getDefaultStorageLocation(id);
+      if (storage) newLocation = withField(newLocation, "storageLocation", storage.id, storage.name);
+    }
     const missing = recomputeMissing(current.itemName, newLocation);
     setPhase(
       missing.length === 0 && current.itemName
