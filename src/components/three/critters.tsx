@@ -27,7 +27,14 @@ function lerpNum(a: number, b: number, t: number): number {
 /* Butterflies                                                         */
 /* ------------------------------------------------------------------ */
 
-const BUTTERFLY_COLORS = ["#f2a552", "#f5e26b", "#f2f2f5", "#e88fb0"];
+// Base wing color paired with a contrasting wingtip-patch accent, so each
+// butterfly reads as an actual patterned wing rather than a flat triangle.
+const BUTTERFLY_PALETTE: { base: string; accent: string }[] = [
+  { base: "#f2a552", accent: "#7a3d12" },
+  { base: "#f5e26b", accent: "#8a6a1a" },
+  { base: "#f2f2f5", accent: "#2b2b2b" },
+  { base: "#e88fb0", accent: "#7a2f47" },
+];
 
 interface ButterflyRuntime {
   x: number;
@@ -56,19 +63,23 @@ function Butterfly({
   waypoints,
   seed,
   color,
+  accentColor,
 }: {
   envRef: MutableRefObject<EnvironmentTarget>;
   bounds: Bounds;
   waypoints: [number, number][];
   seed: number;
   color: string;
+  accentColor: string;
 }) {
   const groupRef = useRef<Group>(null);
-  const wingLRef = useRef<Mesh>(null);
-  const wingRRef = useRef<Mesh>(null);
+  const wingLRef = useRef<Group>(null);
+  const wingRRef = useRef<Group>(null);
   const matRef = useRef<MeshStandardMaterial>(null);
   const wingMatLRef = useRef<MeshStandardMaterial>(null);
   const wingMatRRef = useRef<MeshStandardMaterial>(null);
+  const accentMatLRef = useRef<MeshStandardMaterial>(null);
+  const accentMatRRef = useRef<MeshStandardMaterial>(null);
   const boundary = yardBoundaryRadius(bounds.radius);
 
   const runtime = useRef<ButterflyRuntime | null>(null);
@@ -134,6 +145,8 @@ function Butterfly({
     if (matRef.current) matRef.current.opacity = active * 0.95;
     if (wingMatLRef.current) wingMatLRef.current.opacity = active * 0.92;
     if (wingMatRRef.current) wingMatRRef.current.opacity = active * 0.92;
+    if (accentMatLRef.current) accentMatLRef.current.opacity = active * 0.9;
+    if (accentMatRRef.current) accentMatRRef.current.opacity = active * 0.9;
   });
    
 
@@ -143,14 +156,27 @@ function Butterfly({
         <sphereGeometry args={[0.15, 6, 5]} />
         <meshStandardMaterial ref={matRef} color="#2b2b2b" transparent opacity={0} roughness={0.6} />
       </mesh>
-      <mesh ref={wingLRef} position={[-0.05, 0.05, 0]}>
-        <planeGeometry args={[0.55, 0.4]} />
-        <meshStandardMaterial ref={wingMatLRef} color={color} transparent opacity={0.92} side={DoubleSide} roughness={0.5} />
-      </mesh>
-      <mesh ref={wingRRef} position={[0.05, 0.05, 0]}>
-        <planeGeometry args={[0.55, 0.4]} />
-        <meshStandardMaterial ref={wingMatRRef} color={color} transparent opacity={0.92} side={DoubleSide} roughness={0.5} />
-      </mesh>
+      {/* Each wing is a group so the smaller wingtip-patch overlay inherits the flap rotation automatically. */}
+      <group ref={wingLRef} position={[-0.05, 0.05, 0]}>
+        <mesh>
+          <planeGeometry args={[0.55, 0.4]} />
+          <meshStandardMaterial ref={wingMatLRef} color={color} transparent opacity={0.92} side={DoubleSide} roughness={0.5} />
+        </mesh>
+        <mesh position={[-0.14, -0.06, 0.001]}>
+          <planeGeometry args={[0.24, 0.16]} />
+          <meshStandardMaterial ref={accentMatLRef} color={accentColor} transparent opacity={0.9} side={DoubleSide} roughness={0.5} />
+        </mesh>
+      </group>
+      <group ref={wingRRef} position={[0.05, 0.05, 0]}>
+        <mesh>
+          <planeGeometry args={[0.55, 0.4]} />
+          <meshStandardMaterial ref={wingMatRRef} color={color} transparent opacity={0.92} side={DoubleSide} roughness={0.5} />
+        </mesh>
+        <mesh position={[0.14, -0.06, 0.001]}>
+          <planeGeometry args={[0.24, 0.16]} />
+          <meshStandardMaterial ref={accentMatRRef} color={accentColor} transparent opacity={0.9} side={DoubleSide} roughness={0.5} />
+        </mesh>
+      </group>
     </group>
   );
 }
@@ -177,14 +203,22 @@ export function Butterflies({
     const rand = seededRandom(919);
     return Array.from({ length: count }, (_, i) => ({
       seed: 920 + i * 17,
-      color: BUTTERFLY_COLORS[Math.floor(rand() * BUTTERFLY_COLORS.length)],
+      ...BUTTERFLY_PALETTE[Math.floor(rand() * BUTTERFLY_PALETTE.length)],
     }));
   }, [count]);
 
   return (
     <>
       {specs.map((s, i) => (
-        <Butterfly key={i} envRef={envRef} bounds={bounds} waypoints={waypoints} seed={s.seed} color={s.color} />
+        <Butterfly
+          key={i}
+          envRef={envRef}
+          bounds={bounds}
+          waypoints={waypoints}
+          seed={s.seed}
+          color={s.base}
+          accentColor={s.accent}
+        />
       ))}
     </>
   );
@@ -219,6 +253,9 @@ interface FireflyRuntime {
   x: number;
   z: number;
   y: number;
+  trailX: number;
+  trailZ: number;
+  trailY: number;
   targetX: number;
   targetZ: number;
   targetY: number;
@@ -229,10 +266,18 @@ interface FireflyRuntime {
 
 function Firefly({ envRef, bounds, seed }: { envRef: MutableRefObject<EnvironmentTarget>; bounds: Bounds; seed: number }) {
   const groupRef = useRef<Group>(null);
+  const trailGroupRef = useRef<Group>(null);
   const matRef = useRef<ShaderMaterial>(null);
+  const trailMatRef = useRef<ShaderMaterial>(null);
   const boundary = yardBoundaryRadius(bounds.radius);
   const padHalf = yardPadHalf(bounds.radius);
   const color = useMemo(() => new Color(FIREFLY_COLORS[seed % FIREFLY_COLORS.length]), [seed]);
+  // A static per-instance size (not the shared env-driven flicker) so the
+  // swarm doesn't read as a set of identical clones.
+  const sizeScale = useMemo(() => {
+    const rand = seededRandom(seed + 500);
+    return 0.7 + rand() * 0.7;
+  }, [seed]);
 
   const runtime = useRef<FireflyRuntime | null>(null);
   if (runtime.current == null) {
@@ -241,13 +286,17 @@ function Firefly({ envRef, bounds, seed }: { envRef: MutableRefObject<Environmen
     const dist = padHalf * 1.15 + rand() * (boundary - padHalf);
     const x = bounds.centerX + Math.cos(angle) * dist;
     const z = bounds.centerZ + Math.sin(angle) * dist;
+    const y = 0.25 + rand() * 0.55;
     runtime.current = {
       x,
       z,
-      y: 0.25 + rand() * 0.55,
+      y,
+      trailX: x,
+      trailZ: z,
+      trailY: y,
       targetX: x,
       targetZ: z,
-      targetY: 0.25 + rand() * 0.55,
+      targetY: y,
       flickerPhase: rand() * Math.PI * 2,
       flickerFreq: 0.5 + rand() * 0.7,
       speed: 0.1 + rand() * 0.08,
@@ -255,7 +304,7 @@ function Firefly({ envRef, bounds, seed }: { envRef: MutableRefObject<Environmen
   }
   const r = runtime.current;
 
-   
+
   useFrame(({ clock }, delta) => {
     const env = envRef.current;
     const active = env.nightAmount;
@@ -263,9 +312,11 @@ function Firefly({ envRef, bounds, seed }: { envRef: MutableRefObject<Environmen
 
     if (active < 0.02) {
       groupRef.current.visible = false;
+      if (trailGroupRef.current) trailGroupRef.current.visible = false;
       return;
     }
     groupRef.current.visible = true;
+    if (trailGroupRef.current) trailGroupRef.current.visible = true;
 
     const dx = r.targetX - r.x;
     const dz = r.targetZ - r.z;
@@ -279,10 +330,18 @@ function Firefly({ envRef, bounds, seed }: { envRef: MutableRefObject<Environmen
     r.x += dx * Math.min(1, r.speed * delta);
     r.z += dz * Math.min(1, r.speed * delta);
     r.y += (r.targetY - r.y) * Math.min(1, r.speed * delta * 0.6);
+    // The trail lags behind the real position at a slower catch-up rate,
+    // leaving a faint smear of where the firefly just was.
+    r.trailX += (r.x - r.trailX) * Math.min(1, delta * 1.6);
+    r.trailZ += (r.z - r.trailZ) * Math.min(1, delta * 1.6);
+    r.trailY += (r.y - r.trailY) * Math.min(1, delta * 1.6);
 
     const wobbleX = Math.sin(clock.elapsedTime * 0.7 + r.flickerPhase) * 0.06;
     const wobbleZ = Math.cos(clock.elapsedTime * 0.6 + r.flickerPhase) * 0.06;
     groupRef.current.position.set(r.x + wobbleX, r.y, r.z + wobbleZ);
+    if (trailGroupRef.current) {
+      trailGroupRef.current.position.set(r.trailX + wobbleX * 0.8, r.trailY, r.trailZ + wobbleZ * 0.8);
+    }
 
     // Glow / fade / move / glow again — an eased pulse, not a flat blink.
     const pulse = (Math.sin(clock.elapsedTime * r.flickerFreq + r.flickerPhase) + 1) / 2;
@@ -290,27 +349,49 @@ function Firefly({ envRef, bounds, seed }: { envRef: MutableRefObject<Environmen
     if (matRef.current) {
       matRef.current.uniforms.glowOpacity.value = active * eased * 0.55;
     }
+    if (trailMatRef.current) {
+      trailMatRef.current.uniforms.glowOpacity.value = active * eased * 0.55 * 0.32;
+    }
   });
-   
+
 
   return (
-    <group ref={groupRef}>
-      <Billboard>
-        <mesh>
-          <planeGeometry args={[0.22, 0.22]} />
-          <shaderMaterial
-            ref={matRef}
-            transparent
-            depthWrite={false}
-            blending={AdditiveBlending}
-            uniforms={{ glowColor: { value: color }, glowOpacity: { value: 0 } }}
-            vertexShader={FIREFLY_GLOW_VERTEX}
-            fragmentShader={FIREFLY_GLOW_FRAGMENT}
-            fog={false}
-          />
-        </mesh>
-      </Billboard>
-    </group>
+    <>
+      <group ref={groupRef}>
+        <Billboard>
+          <mesh scale={sizeScale}>
+            <planeGeometry args={[0.22, 0.22]} />
+            <shaderMaterial
+              ref={matRef}
+              transparent
+              depthWrite={false}
+              blending={AdditiveBlending}
+              uniforms={{ glowColor: { value: color }, glowOpacity: { value: 0 } }}
+              vertexShader={FIREFLY_GLOW_VERTEX}
+              fragmentShader={FIREFLY_GLOW_FRAGMENT}
+              fog={false}
+            />
+          </mesh>
+        </Billboard>
+      </group>
+      <group ref={trailGroupRef}>
+        <Billboard>
+          <mesh scale={sizeScale * 0.75}>
+            <planeGeometry args={[0.22, 0.22]} />
+            <shaderMaterial
+              ref={trailMatRef}
+              transparent
+              depthWrite={false}
+              blending={AdditiveBlending}
+              uniforms={{ glowColor: { value: color }, glowOpacity: { value: 0 } }}
+              vertexShader={FIREFLY_GLOW_VERTEX}
+              fragmentShader={FIREFLY_GLOW_FRAGMENT}
+              fog={false}
+            />
+          </mesh>
+        </Billboard>
+      </group>
+    </>
   );
 }
 
@@ -433,16 +514,17 @@ function DogModel({
 
   return (
     <group scale={spec.size}>
-      <mesh position={[0, 0.22, 0]} castShadow>
-        <boxGeometry args={[0.42, 0.2, 0.18]} />
+      {/* Body: a horizontal capsule reads far rounder than a box at this small scale. */}
+      <mesh position={[0, 0.22, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+        <capsuleGeometry args={[0.1, 0.22, 4, 8]} />
         <meshStandardMaterial ref={bodyMatRef} color={spec.bodyColor} roughness={0.85} />
       </mesh>
-      <mesh position={[0.24, 0.28, 0]} castShadow>
-        <boxGeometry args={[0.16, 0.15, 0.14]} />
+      <mesh position={[0.24, 0.28, 0]} scale={[1.15, 1, 0.95]} castShadow>
+        <sphereGeometry args={[0.09, 10, 8]} />
         <meshStandardMaterial color={spec.bodyColor} roughness={0.85} />
       </mesh>
-      <mesh position={[0.33, 0.25, 0]} castShadow>
-        <boxGeometry args={[0.1, 0.08, 0.09]} />
+      <mesh position={[0.34, 0.25, 0]} scale={[1.3, 0.85, 0.85]} castShadow>
+        <sphereGeometry args={[0.05, 8, 7]} />
         <meshStandardMaterial color={spec.bodyColor} roughness={0.85} />
       </mesh>
       <mesh position={[0.19, 0.37, 0.06]} rotation={[0, 0, -0.3]} castShadow>

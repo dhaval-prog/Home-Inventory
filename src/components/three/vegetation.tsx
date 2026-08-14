@@ -26,9 +26,29 @@ export function yardBoundaryRadius(radius: number): number {
 }
 
 const TRUNK_COLORS = ["#8a6444", "#7c5a3d", "#93714f", "#846043"];
-const FOLIAGE_COLORS = ["#5f9155", "#6fa15f", "#4f8a52", "#7aab68", "#5a8f6a", "#699a5c"];
+// Muted, slightly olive greens (rather than saturated cartoon green) so the
+// yard sits comfortably next to the app's pastel cream/pink/purple palette.
+const FOLIAGE_COLORS = ["#7a9c63", "#8aab6f", "#6f9159", "#96b378", "#7f9c66", "#89a86e"];
+// A minority of trees get a warm blossom or autumn accent instead of green,
+// for variety — never enough to make the whole yard look seasonal.
+const BLOSSOM_COLORS = ["#f0c3d8", "#f7dcc8", "#fbe9d6"];
+const AUTUMN_COLORS = ["#d98a4a", "#c96b3f", "#e0a25c"];
 
-type TreeShape = "conical" | "round" | "sparse";
+type TreeKind = "blob" | "pine";
+
+interface FoliageLobe {
+  offset: [number, number, number];
+  scale: number;
+  color: string;
+}
+
+interface PineTier {
+  y: number;
+  radius: number;
+  height: number;
+  offset: [number, number];
+  color: string;
+}
 
 interface TreeSpec {
   position: [number, number, number];
@@ -36,9 +56,9 @@ interface TreeSpec {
   trunkHeight: number;
   trunkRadius: number;
   trunkColor: string;
-  shape: TreeShape;
-  foliageColor: string;
-  foliageColor2: string;
+  kind: TreeKind;
+  lobes: FoliageLobe[];
+  pineTiers: PineTier[];
   foliageRadius: number;
   lean: [number, number];
   windPhase: number;
@@ -55,17 +75,55 @@ function makeTreeSpecs(bounds: Bounds, count: number): TreeSpec[] {
     const baseAngle = (i / count) * Math.PI * 2;
     const angle = baseAngle + (rand() - 0.5) * ((Math.PI * 2) / count) * 1.4;
     const dist = boundary + 0.1 + rand() * 2.5; // some hug the fence, some sit further back as background
-    const shapes: TreeShape[] = ["conical", "round", "sparse"];
+    const trunkHeight = 0.42 + rand() * 0.34;
+    const foliageRadius = 0.3 + rand() * 0.24;
+
+    // ~1-in-4 trees gets a blossom/autumn accent instead of green.
+    const isAccent = rand() < 0.25;
+    const palette = isAccent ? (rand() < 0.5 ? BLOSSOM_COLORS : AUTUMN_COLORS) : FOLIAGE_COLORS;
+    const colorA = palette[Math.floor(rand() * palette.length)];
+    const colorB = palette[Math.floor(rand() * palette.length)];
+    const kind: TreeKind = !isAccent && rand() < 0.3 ? "pine" : "blob";
+
+    const lobes: FoliageLobe[] = [];
+    const pineTiers: PineTier[] = [];
+    if (kind === "blob") {
+      // Irregular, asymmetric canopy: each lobe gets its own random angle,
+      // distance and size — never a neat mirrored/stacked arrangement.
+      const lobeCount = 3 + Math.floor(rand() * 3);
+      for (let l = 0; l < lobeCount; l++) {
+        const a = rand() * Math.PI * 2;
+        const r = foliageRadius * (0.12 + rand() * 0.42);
+        lobes.push({
+          offset: [Math.cos(a) * r, foliageRadius * (0.35 + rand() * 1.05), Math.sin(a) * r],
+          scale: foliageRadius * (0.42 + rand() * 0.46),
+          color: rand() < 0.65 ? colorA : colorB,
+        });
+      }
+    } else {
+      // A looser pine: still tiered, but each tier gets a small random xz
+      // offset so it doesn't read as a perfectly stacked toy shape.
+      for (let t = 0; t < 3; t++) {
+        pineTiers.push({
+          y: foliageRadius * (0.5 + t * 0.55),
+          radius: foliageRadius * (1 - t * 0.28),
+          height: foliageRadius * (1.5 - t * 0.25),
+          offset: [(rand() - 0.5) * foliageRadius * 0.18, (rand() - 0.5) * foliageRadius * 0.18],
+          color: t % 2 === 0 ? colorA : colorB,
+        });
+      }
+    }
+
     specs.push({
       position: [bounds.centerX + Math.cos(angle) * dist, 0, bounds.centerZ + Math.sin(angle) * dist],
       scale: 0.75 + rand() * 0.55,
-      trunkHeight: 0.42 + rand() * 0.34,
+      trunkHeight,
       trunkRadius: 0.055 + rand() * 0.03,
       trunkColor: TRUNK_COLORS[Math.floor(rand() * TRUNK_COLORS.length)],
-      shape: shapes[Math.floor(rand() * shapes.length)],
-      foliageColor: FOLIAGE_COLORS[Math.floor(rand() * FOLIAGE_COLORS.length)],
-      foliageColor2: FOLIAGE_COLORS[Math.floor(rand() * FOLIAGE_COLORS.length)],
-      foliageRadius: 0.3 + rand() * 0.24,
+      kind,
+      lobes,
+      pineTiers,
+      foliageRadius,
       lean: [(rand() - 0.5) * 0.1, (rand() - 0.5) * 0.1],
       windPhase: rand() * Math.PI * 2,
       windFreq: 0.55 + rand() * 0.5,
@@ -76,54 +134,27 @@ function makeTreeSpecs(bounds: Bounds, count: number): TreeSpec[] {
 }
 
 function TreeFoliage({ spec }: { spec: TreeSpec }) {
-  const { shape, foliageColor, foliageColor2, foliageRadius, trunkHeight } = spec;
-  if (shape === "conical") {
+  const { trunkHeight } = spec;
+  if (spec.kind === "pine") {
     return (
       <>
-        <mesh position={[0, trunkHeight + foliageRadius * 0.55, 0]} castShadow>
-          <coneGeometry args={[foliageRadius, foliageRadius * 1.7, 9]} />
-          <meshStandardMaterial color={foliageColor} roughness={0.85} />
-        </mesh>
-        <mesh position={[0, trunkHeight + foliageRadius * 1.15, 0]} castShadow>
-          <coneGeometry args={[foliageRadius * 0.68, foliageRadius * 1.3, 9]} />
-          <meshStandardMaterial color={foliageColor2} roughness={0.85} />
-        </mesh>
+        {spec.pineTiers.map((tier, i) => (
+          <mesh key={i} position={[tier.offset[0], trunkHeight + tier.y, tier.offset[1]]} castShadow>
+            <coneGeometry args={[tier.radius, tier.height, 9]} />
+            <meshStandardMaterial color={tier.color} roughness={0.85} />
+          </mesh>
+        ))}
       </>
     );
   }
-  if (shape === "round") {
-    return (
-      <>
-        <mesh position={[-foliageRadius * 0.3, trunkHeight + foliageRadius * 0.5, 0.05]} castShadow>
-          <sphereGeometry args={[foliageRadius * 0.72, 9, 8]} />
-          <meshStandardMaterial color={foliageColor} roughness={0.85} />
-        </mesh>
-        <mesh position={[foliageRadius * 0.32, trunkHeight + foliageRadius * 0.65, -0.06]} castShadow>
-          <sphereGeometry args={[foliageRadius * 0.8, 9, 8]} />
-          <meshStandardMaterial color={foliageColor2} roughness={0.85} />
-        </mesh>
-        <mesh position={[0, trunkHeight + foliageRadius * 1.15, 0]} castShadow>
-          <sphereGeometry args={[foliageRadius * 0.6, 9, 8]} />
-          <meshStandardMaterial color={foliageColor} roughness={0.85} />
-        </mesh>
-      </>
-    );
-  }
-  // sparse: smaller, gappier clusters so trunk/branches read through
   return (
     <>
-      <mesh position={[-foliageRadius * 0.45, trunkHeight + foliageRadius * 0.4, 0]} castShadow>
-        <sphereGeometry args={[foliageRadius * 0.5, 8, 7]} />
-        <meshStandardMaterial color={foliageColor} roughness={0.9} />
-      </mesh>
-      <mesh position={[foliageRadius * 0.4, trunkHeight + foliageRadius * 0.85, 0.1]} castShadow>
-        <sphereGeometry args={[foliageRadius * 0.46, 8, 7]} />
-        <meshStandardMaterial color={foliageColor2} roughness={0.9} />
-      </mesh>
-      <mesh position={[0, trunkHeight + foliageRadius * 1.3, -0.1]} castShadow>
-        <sphereGeometry args={[foliageRadius * 0.4, 8, 7]} />
-        <meshStandardMaterial color={foliageColor} roughness={0.9} />
-      </mesh>
+      {spec.lobes.map((lobe, i) => (
+        <mesh key={i} position={[lobe.offset[0], trunkHeight + lobe.offset[1], lobe.offset[2]]} castShadow>
+          <sphereGeometry args={[lobe.scale, 8, 7]} />
+          <meshStandardMaterial color={lobe.color} roughness={0.87} />
+        </mesh>
+      ))}
     </>
   );
 }
@@ -293,8 +324,9 @@ function GrassTufts({
     mesh.instanceMatrix.needsUpdate = true;
   }, [grass]);
 
-  const grassColor = useMemo(() => new Color("#75a85b"), []);
-  const grassWet = useMemo(() => new Color("#4c6f45"), []);
+  // Same muted-sage family as the lawn plane (home-scene.tsx Yard) so tufts blend in rather than reading as a different, more saturated green.
+  const grassColor = useMemo(() => new Color("#8bab6c"), []);
+  const grassWet = useMemo(() => new Color("#5c7a4a"), []);
   const matRef = useRef<MeshStandardMaterial>(null);
 
    

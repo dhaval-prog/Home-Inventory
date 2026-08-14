@@ -152,8 +152,10 @@ function Yard({
 }) {
   const grassRef = useRef<Mesh>(null);
   const padRef = useRef<Mesh>(null);
-  const grassDryColor = useMemo(() => new Color("#8fbf6a"), []);
-  const grassWetColor = useMemo(() => new Color("#5f8f52"), []);
+  // Muted sage rather than saturated cartoon green — sits better next to the
+  // app's pastel cream/pink/purple "Radiant" palette.
+  const grassDryColor = useMemo(() => new Color("#9cb87a"), []);
+  const grassWetColor = useMemo(() => new Color("#66805a"), []);
   const padDryColor = useMemo(() => new Color("#ede4d0"), []);
   const padWetColor = useMemo(() => new Color("#c9c0ab"), []);
 
@@ -191,7 +193,7 @@ function Yard({
       {/* Grass field */}
       <mesh ref={grassRef} position={[bounds.centerX, -0.02, bounds.centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[bounds.radius * 3, bounds.radius * 3]} />
-        <meshStandardMaterial color="#8fbf6a" roughness={1} />
+        <meshStandardMaterial color="#9cb87a" roughness={1} />
       </mesh>
 
       {/* House foundation pad */}
@@ -292,9 +294,9 @@ function SceneContents({
       {!mobile && (
         <ContactShadows
           position={[bounds.centerX, 0, bounds.centerZ]}
-          opacity={0.5}
+          opacity={0.6}
           scale={bounds.radius * 3}
-          blur={1.8}
+          blur={1.5}
           far={2}
         />
       )}

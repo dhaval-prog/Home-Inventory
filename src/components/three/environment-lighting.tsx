@@ -43,6 +43,7 @@ export function SceneAtmosphere({ envRef, bounds }: { envRef: MutableRefObject<E
 export function DynamicLights({ envRef, bounds, mobile }: { envRef: MutableRefObject<EnvironmentTarget>; bounds: Bounds; mobile: boolean }) {
   const sunRef = useRef<DirectionalLight>(null);
   const moonRef = useRef<DirectionalLight>(null);
+  const rimRef = useRef<DirectionalLight>(null);
   const hemiRef = useRef<HemisphereLight>(null);
   const ambientRef = useRef<AmbientLight>(null);
   const dist = Math.max(bounds.radius * 2.2, 14);
@@ -81,6 +82,17 @@ export function DynamicLights({ envRef, bounds, mobile }: { envRef: MutableRefOb
     if (ambientRef.current) {
       ambientRef.current.intensity = env.ambientIntensity * 0.5;
     }
+    if (rimRef.current) {
+      // A fixed, cool-toned back light from the far side of the plot — no
+      // new shaders, just a second directional light doing the classic
+      // three-point "rim light" trick so edges facing away from the sun
+      // still separate from the background instead of going flat/matte.
+      const l = rimRef.current;
+      l.position.set(bounds.centerX - bounds.radius * 0.9, bounds.radius * 1.1, bounds.centerZ - bounds.radius * 0.6);
+      l.target.position.set(bounds.centerX, 0.4, bounds.centerZ);
+      l.target.updateMatrixWorld();
+      l.intensity = 0.12 + env.dayAmount * 0.18;
+    }
   });
 
   return (
@@ -100,6 +112,7 @@ export function DynamicLights({ envRef, bounds, mobile }: { envRef: MutableRefOb
         shadow-bias={-0.0015}
       />
       <directionalLight ref={moonRef} intensity={0} color="#aebeee" />
+      <directionalLight ref={rimRef} intensity={0} color="#cfe0ff" />
     </>
   );
 }
@@ -178,15 +191,20 @@ function OutdoorLight({ envRef, x, z }: { envRef: MutableRefObject<EnvironmentTa
         <meshStandardMaterial ref={poolMatRef} color="#ffcf8a" transparent opacity={0} depthWrite={false} roughness={1} />
       </mesh>
 
-      {/* Slim pole */}
+      {/* Slim bronze pole — a warmer, more "premium residential" metal tone than flat dark grey */}
       <mesh position={[0, 0.28, 0]} castShadow>
         <cylinderGeometry args={[0.018, 0.022, 0.56, 8]} />
-        <meshStandardMaterial color="#2b2c33" roughness={0.6} metalness={0.3} />
+        <meshStandardMaterial color="#5c4530" roughness={0.4} metalness={0.55} />
       </mesh>
       {/* Small fixture housing */}
       <mesh position={[0, 0.58, 0]} castShadow>
         <coneGeometry args={[0.05, 0.08, 8]} />
-        <meshStandardMaterial color="#2b2c33" roughness={0.6} metalness={0.3} />
+        <meshStandardMaterial color="#5c4530" roughness={0.4} metalness={0.55} />
+      </mesh>
+      {/* Decorative finial cap */}
+      <mesh position={[0, 0.625, 0]} castShadow>
+        <sphereGeometry args={[0.014, 8, 6]} />
+        <meshStandardMaterial color="#7a5a35" roughness={0.35} metalness={0.6} />
       </mesh>
       {/* Warm bulb — self-illuminated via emissive so it visibly glows even before the point light/GlowSprite bloom kicks in */}
       <mesh ref={bulbRef} position={[0, 0.53, 0]}>
