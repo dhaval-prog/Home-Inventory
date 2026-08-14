@@ -47,6 +47,7 @@ export type Furniture = {
   sort_order: number;
   position_x: number | null;
   position_z: number | null;
+  rotation_y: number | null;
   created_at: string;
 };
 

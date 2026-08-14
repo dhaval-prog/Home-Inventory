@@ -67,6 +67,8 @@ create index if not exists furniture_user_id_idx on public.furniture (user_id);
 -- room center). Null means "not yet dragged" — auto-arranged in a grid instead.
 alter table public.furniture add column if not exists position_x double precision;
 alter table public.furniture add column if not exists position_z double precision;
+-- Rotation around the vertical axis, in degrees. Null/0 means "not yet rotated".
+alter table public.furniture add column if not exists rotation_y double precision;
 
 -- ─────────────────────────────────────────────────────────────
 -- storage_locations — nested via parent_id so future arbitrary-depth

@@ -1,5 +1,6 @@
 import type { Furniture, Room } from "@/lib/supabase/types";
-import { getCachedFurniturePosition } from "@/lib/three/furniture-position-cache";
+import { getCachedFurniturePlacement } from "@/lib/three/furniture-position-cache";
+import { getFurnitureRecipe } from "@/lib/three/furniture-recipes";
 
 export const ROOM_WIDTH = 6.4;
 export const ROOM_DEPTH = 5.2;
@@ -49,15 +50,28 @@ export interface FurnitureSlot {
   rotationY: number;
 }
 
-/** Deterministic grid placement along the back wall, wrapping forward for overflow. */
-export function computeFurnitureSlots(count: number, width: number, depth: number): FurnitureSlot[] {
+/**
+ * Deterministic grid placement, sized from the pieces' actual footprints so
+ * adjacent auto-arranged furniture never visually overlaps (which would make
+ * pieces behind others un-draggable and their rotate handles unreachable).
+ */
+export function computeFurnitureSlots(items: Furniture[], width: number, depth: number): FurnitureSlot[] {
+  const count = items.length;
   if (count === 0) return [];
-  const cols = Math.min(count, 3);
+
+  const footprints = items.map((f) => getFurnitureRecipe(f.type).footprint);
+  const maxW = Math.max(...footprints.map(([w]) => w));
+  const maxD = Math.max(...footprints.map(([, d]) => d));
+  const marginX = width * 0.1;
+  const marginZ = depth * 0.12;
+  const usableW = Math.max(width - marginX * 2, maxW);
+  const usableD = Math.max(depth - marginZ * 2, maxD);
+  const cellW = maxW + 0.5;
+  const cellD = maxD + 0.5;
+
+  const cols = Math.max(1, Math.min(count, Math.floor(usableW / cellW) || 1));
   const rows = Math.ceil(count / cols);
-  const marginX = width * 0.18;
-  const marginZ = depth * 0.2;
-  const usableW = width - marginX * 2;
-  const usableD = depth - marginZ * 2;
+  const maxZSpan = usableD / 2;
 
   const slots: FurnitureSlot[] = [];
   for (let i = 0; i < count; i++) {
@@ -65,8 +79,12 @@ export function computeFurnitureSlots(count: number, width: number, depth: numbe
     const rowStart = row * cols;
     const rowCount = Math.min(cols, count - rowStart);
     const col = i - rowStart;
-    const x = -usableW / 2 + (usableW / (rowCount + 1)) * (col + 1);
-    const z = rows === 1 ? -usableD / 2 : -usableD / 2 + (usableD / (rows + 1)) * (row + 1);
+    // Fixed cellW/cellD spacing between slot centers (not spread evenly across
+    // usableW) — that guarantees the gap the cell size was chosen for actually
+    // exists, instead of shrinking to nothing once a row is exactly full.
+    const x = (col - (rowCount - 1) / 2) * cellW;
+    const rawZ = (row - (rows - 1) / 2) * cellD;
+    const z = Math.max(-maxZSpan, Math.min(maxZSpan, rawZ));
     slots.push({ x, z, rotationY: 0 });
   }
   return slots;
@@ -80,11 +98,11 @@ export interface PlacedFurniture {
 }
 
 /**
- * Furniture the user has dragged into place keeps that spot — from the database
- * once position_x/position_z are set there, or from the local autosave cache in
- * the meantime — so the 2D floor plan and 3D scene always agree. Everything else
- * falls back to the deterministic auto-arranged grid so newly added furniture
- * always starts somewhere sensible.
+ * Furniture the user has dragged/rotated into place keeps that spot — from the
+ * database once position_x/position_z/rotation_y are set there, or from the
+ * local autosave cache in the meantime — so the 2D floor plan and 3D scene
+ * always agree. Everything else falls back to the deterministic auto-arranged
+ * grid so newly added furniture always starts somewhere sensible.
  */
 export function placeFurniture(
   furniture: Furniture[],
@@ -95,27 +113,29 @@ export function placeFurniture(
   const { useLocalCache = true } = options;
   const marginX = width / 2 - 0.3;
   const marginZ = depth / 2 - 0.3;
-  const clamp = (x: number, z: number) => ({
+  const clamp = (x: number, z: number, rotationY: number) => ({
     x: Math.max(-marginX, Math.min(marginX, x)),
     z: Math.max(-marginZ, Math.min(marginZ, z)),
+    rotationY,
   });
 
   const resolved = furniture.map((f) => {
     if (f.position_x != null && f.position_z != null) {
-      return { furniture: f, pos: clamp(f.position_x, f.position_z) };
+      return { furniture: f, pos: clamp(f.position_x, f.position_z, f.rotation_y ?? 0) };
     }
-    const cached = useLocalCache ? getCachedFurniturePosition(f.id) : null;
+    const cached = useLocalCache ? getCachedFurniturePlacement(f.id) : null;
     if (cached) {
-      return { furniture: f, pos: clamp(cached.x, cached.z) };
+      return { furniture: f, pos: clamp(cached.x, cached.z, cached.rotationY) };
     }
     return { furniture: f, pos: null };
   });
 
-  const slots = computeFurnitureSlots(resolved.filter((r) => !r.pos).length, width, depth);
+  const autoFurniture = resolved.filter((r) => !r.pos).map((r) => r.furniture);
+  const slots = computeFurnitureSlots(autoFurniture, width, depth);
   let autoIndex = 0;
 
   return resolved.map((r) => {
-    if (r.pos) return { furniture: r.furniture, ...r.pos, rotationY: 0 };
+    if (r.pos) return { furniture: r.furniture, ...r.pos };
     const slot = slots[autoIndex];
     autoIndex += 1;
     return { furniture: r.furniture, ...slot };

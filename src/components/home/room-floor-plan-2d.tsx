@@ -3,18 +3,25 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useRouter } from "next/navigation";
+import { RotateCw } from "lucide-react";
 import { getIcon } from "@/lib/icon-map";
 import { getFurnitureRecipe } from "@/lib/three/furniture-recipes";
 import { placeFurniture, ROOM_WIDTH, ROOM_DEPTH } from "@/lib/three/layout";
 import { roomFloorColor } from "@/lib/three/room-colors";
-import { updateFurniturePosition } from "@/lib/actions/furniture";
-import { getCachedFurniturePosition, setCachedFurniturePosition } from "@/lib/three/furniture-position-cache";
+import { updateFurniturePlacement } from "@/lib/actions/furniture";
+import { getCachedFurniturePlacement, setCachedFurniturePlacement } from "@/lib/three/furniture-position-cache";
 import type { Furniture, Room } from "@/lib/supabase/types";
 
 const SCALE = 42; // pixels per meter
 const MARGIN_X = ROOM_WIDTH / 2 - 0.3;
 const MARGIN_Z = ROOM_DEPTH / 2 - 0.3;
 const DRAG_THRESHOLD_PX = 4;
+
+interface Placement {
+  x: number;
+  z: number;
+  rotationY: number;
+}
 
 interface DragState {
   id: string;
@@ -36,24 +43,28 @@ export function RoomFloorPlan2D({
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  // Seed with the server-matching layout (DB position or auto-arranged grid) so
-  // the very first client render matches SSR exactly — the local autosave cache
-  // is only ever consulted after mount, below, to avoid a hydration mismatch.
-  const [positions, setPositions] = useState<Record<string, { x: number; z: number }>>(() => {
+  // Seed with the server-matching layout (DB position/rotation or auto-arranged
+  // grid) so the very first client render matches SSR exactly — the local
+  // autosave cache is only ever consulted after mount, below, to avoid a
+  // hydration mismatch.
+  const [placements, setPlacements] = useState<Record<string, Placement>>(() => {
     const placed = placeFurniture(furniture, ROOM_WIDTH, ROOM_DEPTH, { useLocalCache: false });
-    return Object.fromEntries(placed.map((p) => [p.furniture.id, { x: p.x, z: p.z }]));
+    return Object.fromEntries(placed.map((p) => [p.furniture.id, { x: p.x, z: p.z, rotationY: p.rotationY }]));
   });
   const dragRef = useRef<DragState | null>(null);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPositions((prev) => {
+    setPlacements((prev) => {
       let changed = false;
       const next = { ...prev };
       for (const f of furniture) {
         if (f.position_x != null && f.position_z != null) continue; // DB already authoritative
-        const cached = getCachedFurniturePosition(f.id);
-        if (cached && (next[f.id]?.x !== cached.x || next[f.id]?.z !== cached.z)) {
+        const cached = getCachedFurniturePlacement(f.id);
+        if (
+          cached &&
+          (next[f.id]?.x !== cached.x || next[f.id]?.z !== cached.z || next[f.id]?.rotationY !== cached.rotationY)
+        ) {
           next[f.id] = cached;
           changed = true;
         }
@@ -61,7 +72,7 @@ export function RoomFloorPlan2D({
       return changed ? next : prev;
     });
     // Runs once after mount, client-only — deliberately not re-syncing on every
-    // `furniture` identity change since drags update `positions` directly.
+    // `furniture` identity change since drags/rotates update `placements` directly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -72,15 +83,22 @@ export function RoomFloorPlan2D({
     return { left: (x + ROOM_WIDTH / 2) * SCALE, top: (z + ROOM_DEPTH / 2) * SCALE };
   }
 
+  function persist(id: string, placement: Placement) {
+    setCachedFurniturePlacement(id, placement.x, placement.z, placement.rotationY);
+    startTransition(() => {
+      updateFurniturePlacement(id, room.id, placement.x, placement.z, placement.rotationY);
+    });
+  }
+
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>, id: string) {
-    const pos = positions[id];
-    if (!pos) return;
+    const placement = placements[id];
+    if (!placement) return;
     dragRef.current = {
       id,
       startClientX: e.clientX,
       startClientY: e.clientY,
-      startX: pos.x,
-      startZ: pos.z,
+      startX: placement.x,
+      startZ: placement.z,
       moved: false,
     };
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -96,7 +114,7 @@ export function RoomFloorPlan2D({
     }
     const nextX = Math.max(-MARGIN_X, Math.min(MARGIN_X, drag.startX + dxPx / SCALE));
     const nextZ = Math.max(-MARGIN_Z, Math.min(MARGIN_Z, drag.startZ + dyPx / SCALE));
-    setPositions((prev) => ({ ...prev, [drag.id]: { x: nextX, z: nextZ } }));
+    setPlacements((prev) => ({ ...prev, [drag.id]: { ...prev[drag.id], x: nextX, z: nextZ, rotationY: prev[drag.id]?.rotationY ?? 0 } }));
   }
 
   function onPointerUp(id: string) {
@@ -107,12 +125,18 @@ export function RoomFloorPlan2D({
       router.push(`/home/rooms/${room.id}/furniture/${id}`);
       return;
     }
-    const pos = positions[id];
-    if (!pos) return;
-    setCachedFurniturePosition(id, pos.x, pos.z);
-    startTransition(() => {
-      updateFurniturePosition(id, room.id, pos.x, pos.z);
-    });
+    const placement = placements[id];
+    if (!placement) return;
+    persist(id, placement);
+  }
+
+  function onRotate(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    const current = placements[id];
+    if (!current) return;
+    const next = { ...current, rotationY: (current.rotationY + 90) % 360 };
+    setPlacements((prev) => ({ ...prev, [id]: next }));
+    persist(id, next);
   }
 
   return (
@@ -127,11 +151,11 @@ export function RoomFloorPlan2D({
         }}
       >
         {furniture.map((f) => {
-          const pos = positions[f.id] ?? { x: 0, z: 0 };
+          const placement = placements[f.id] ?? { x: 0, z: 0, rotationY: 0 };
           const recipe = getFurnitureRecipe(f.type);
           const [fw, fd] = recipe.footprint;
           const color = recipe.parts[0]?.color ?? "#c9baa3";
-          const { left, top } = toPixels(pos.x, pos.z);
+          const { left, top } = toPixels(placement.x, placement.z);
           const Icon = getIcon(f.icon);
           const count = itemCountByFurniture[f.id] ?? 0;
 
@@ -141,13 +165,13 @@ export function RoomFloorPlan2D({
               onPointerDown={(e) => onPointerDown(e, f.id)}
               onPointerMove={onPointerMove}
               onPointerUp={() => onPointerUp(f.id)}
-              className="absolute flex cursor-grab touch-none select-none flex-col items-center justify-center gap-0.5 rounded-lg shadow-sm transition-shadow active:cursor-grabbing active:shadow-md"
+              className="absolute z-0 flex cursor-grab touch-none select-none flex-col items-center justify-center gap-0.5 rounded-lg shadow-sm transition-shadow hover:z-20 focus-within:z-20 active:cursor-grabbing active:z-20 active:shadow-md"
               style={{
                 left,
                 top,
                 width: Math.max(fw * SCALE, 30),
                 height: Math.max(fd * SCALE, 30),
-                transform: "translate(-50%, -50%)",
+                transform: `translate(-50%, -50%) rotate(${placement.rotationY}deg)`,
                 backgroundColor: color,
               }}
             >
@@ -156,15 +180,27 @@ export function RoomFloorPlan2D({
                 {f.name}
               </span>
               {count > 0 && (
-                <span className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full bg-[#0b0b14] text-[9px] font-bold text-white">
+                <span className="absolute -left-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full bg-[#0b0b14] text-[9px] font-bold text-white">
                   {count}
                 </span>
               )}
+              <button
+                type="button"
+                aria-label={`Rotate ${f.name}`}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => onRotate(e, f.id)}
+                className="absolute -right-1.5 -top-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full bg-white text-[#0b0b14] shadow ring-1 ring-[#0b0b14]/10 hover:bg-white/90"
+                style={{ transform: `rotate(${-placement.rotationY}deg)` }}
+              >
+                <RotateCw className="size-3" />
+              </button>
             </div>
           );
         })}
       </div>
-      <p className="mt-3 text-center text-xs text-muted-foreground">Drag furniture to rearrange · Tap to open</p>
+      <p className="mt-3 text-center text-xs text-muted-foreground">
+        Drag to rearrange · Tap the ↻ icon to rotate · Tap the item to open
+      </p>
     </div>
   );
 }
