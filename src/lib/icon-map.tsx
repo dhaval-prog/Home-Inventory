@@ -1,5 +1,5 @@
+import type { ComponentType } from "react";
 import {
-  Sofa,
   Tv,
   Refrigerator,
   Bed,
@@ -43,11 +43,13 @@ import {
   Search,
   Settings,
   LayoutDashboard,
-  type LucideIcon,
 } from "lucide-react";
+import { SofaIcon } from "@/components/icons/sofa-icon";
 
-export const ICON_MAP: Record<string, LucideIcon> = {
-  Sofa,
+export type AppIcon = ComponentType<{ className?: string }>;
+
+export const ICON_MAP: Record<string, AppIcon> = {
+  Sofa: SofaIcon,
   Tv,
   Refrigerator,
   Bed,
@@ -93,6 +95,6 @@ export const ICON_MAP: Record<string, LucideIcon> = {
   LayoutDashboard,
 };
 
-export function getIcon(name: string | null | undefined): LucideIcon {
+export function getIcon(name: string | null | undefined): AppIcon {
   return (name && ICON_MAP[name]) || Package;
 }
