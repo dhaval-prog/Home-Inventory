@@ -1,11 +1,17 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ComponentRef } from "react";
+import type { ComponentRef, MutableRefObject } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { ContactShadows, OrbitControls } from "@react-three/drei";
-import { Vector3 } from "three";
+import { Color, Vector3, type Mesh, type MeshStandardMaterial } from "three";
 import { RoomBlock } from "@/components/three/room-block";
+import { SkyDome } from "@/components/three/sky-dome";
+import { Clouds } from "@/components/three/clouds";
+import { Rain, Lightning } from "@/components/three/rain";
+import { DynamicLights, HouseLights, OutdoorLights, SceneAtmosphere } from "@/components/three/environment-lighting";
+import { useEnvironment } from "@/lib/three/use-environment";
+import type { EnvironmentTarget, WeatherCondition } from "@/lib/three/environment";
 import { computeRoomLayout, layoutBounds } from "@/lib/three/layout";
 import type { Furniture, Room } from "@/lib/supabase/types";
 import type { SceneItemSummary } from "@/lib/home-scene-data";
@@ -19,6 +25,10 @@ export interface HomeScene3DProps {
   focusRoomId?: string;
   highlightFurnitureId?: string;
   className?: string;
+  /** Optional live weather condition (section 22: connect a real API here later). Defaults to "sunny". */
+  weather?: WeatherCondition;
+  /** Optional fixed hour (0-24) to preview a specific time of day; omit to use the real local time. */
+  timeOverrideHour?: number;
 }
 
 function isMobileViewport() {
@@ -155,7 +165,28 @@ function Bush({ position }: { position: [number, number, number] }) {
  * and a few corner trees/bushes — evoking a "mini home" diorama without capping the
  * rooms with a roof (which would hide the furniture the rest of the app needs visible).
  */
-function Yard({ bounds }: { bounds: SceneBounds }) {
+function Yard({ bounds, envRef }: { bounds: SceneBounds; envRef: MutableRefObject<EnvironmentTarget> }) {
+  const grassRef = useRef<Mesh>(null);
+  const padRef = useRef<Mesh>(null);
+  const grassDryColor = useMemo(() => new Color("#8fbf6a"), []);
+  const grassWetColor = useMemo(() => new Color("#5f8f52"), []);
+  const padDryColor = useMemo(() => new Color("#ede4d0"), []);
+  const padWetColor = useMemo(() => new Color("#c9c0ab"), []);
+
+  useFrame(() => {
+    const wetness = envRef.current.groundWetness;
+    const grassMat = grassRef.current?.material as MeshStandardMaterial | undefined;
+    if (grassMat) {
+      grassMat.color.copy(grassDryColor).lerp(grassWetColor, wetness);
+      grassMat.roughness = 1 - wetness * 0.65;
+    }
+    const padMat = padRef.current?.material as MeshStandardMaterial | undefined;
+    if (padMat) {
+      padMat.color.copy(padDryColor).lerp(padWetColor, wetness);
+      padMat.roughness = 0.95 - wetness * 0.7;
+    }
+  });
+
   const padHalf = (bounds.radius * 1.18) / 2;
   const fenceHalf = padHalf + 0.55;
   const fencePosts = useMemo(() => {
@@ -181,13 +212,13 @@ function Yard({ bounds }: { bounds: SceneBounds }) {
   return (
     <>
       {/* Grass field */}
-      <mesh position={[bounds.centerX, -0.02, bounds.centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <mesh ref={grassRef} position={[bounds.centerX, -0.02, bounds.centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[bounds.radius * 3, bounds.radius * 3]} />
         <meshStandardMaterial color="#8fbf6a" roughness={1} />
       </mesh>
 
       {/* House foundation pad */}
-      <mesh position={[bounds.centerX, -0.005, bounds.centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <mesh ref={padRef} position={[bounds.centerX, -0.005, bounds.centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[padHalf * 2, padHalf * 2]} />
         <meshStandardMaterial color="#ede4d0" roughness={0.95} />
       </mesh>
@@ -213,10 +244,14 @@ function SceneContents({
   onFurnitureClick,
   focusRoomId,
   highlightFurnitureId,
+  weather,
+  timeOverrideHour,
   mobile,
 }: HomeScene3DProps & { mobile: boolean }) {
   const layout = useMemo(() => computeRoomLayout(rooms), [rooms]);
   const bounds = useMemo(() => layoutBounds(layout), [layout]);
+  const envRef = useEnvironment({ condition: weather ?? "sunny" }, timeOverrideHour);
+  const skyRadius = Math.max(bounds.radius * 4, 14);
 
   const focused = focusRoomId ? layout.find((l) => l.room.id === focusRoomId) : undefined;
   const targetX = focused ? focused.x : bounds.centerX;
@@ -255,27 +290,23 @@ function SceneContents({
 
   return (
     <>
-      {/* Fully local lighting rig (no external HDR/CDN assets) so the scene
-          never depends on network access to render. Warm key + cool fill for depth. */}
-      <hemisphereLight color="#eef1fb" groundColor="#c9baa3" intensity={0.5} />
-      <ambientLight intensity={0.22} />
-      <directionalLight
-        position={[bounds.centerX + 8, 12, bounds.centerZ + 6]}
-        intensity={1.55}
-        color="#fff2da"
-        castShadow={!mobile}
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
-        shadow-camera-left={-bounds.radius}
-        shadow-camera-right={bounds.radius}
-        shadow-camera-top={bounds.radius}
-        shadow-camera-bottom={-bounds.radius}
-        shadow-bias={-0.0015}
-      />
-      <directionalLight position={[bounds.centerX - 10, 6, bounds.centerZ - 8]} intensity={0.32} color="#dbe6f7" />
-      <directionalLight position={[bounds.centerX, 5, bounds.centerZ + 12]} intensity={0.22} color="#f5ece0" />
+      {/* Fully local environment + lighting rig (no external HDR/CDN assets) so
+          the scene never depends on network access to render. Every visual —
+          sky, sun/moon, clouds, rain, house/outdoor lights — derives from one
+          smoothed environment snapshot (see lib/three/environment.ts), so time
+          of day and weather always agree with each other. */}
+      <color attach="background" args={["#dfe9f5"]} />
+      <fog attach="fog" args={["#dfe9f5", bounds.radius * 1.5, bounds.radius * 6]} />
+      <SceneAtmosphere envRef={envRef} bounds={bounds} />
+      <DynamicLights envRef={envRef} bounds={bounds} mobile={mobile} />
+      <SkyDome envRef={envRef} radius={skyRadius} sceneRadius={bounds.radius} center={[bounds.centerX, bounds.centerZ]} />
+      <Clouds envRef={envRef} center={[bounds.centerX, bounds.centerZ]} radius={bounds.radius} lowQuality={mobile} />
+      <Rain envRef={envRef} center={[bounds.centerX, bounds.centerZ]} radius={bounds.radius} lowQuality={mobile} />
+      <Lightning envRef={envRef} center={[bounds.centerX, bounds.centerZ]} radius={bounds.radius} />
+      <HouseLights envRef={envRef} layout={layout} />
+      <OutdoorLights envRef={envRef} bounds={bounds} />
 
-      <Yard bounds={bounds} />
+      <Yard bounds={bounds} envRef={envRef} />
 
       {!mobile && (
         <ContactShadows
@@ -341,8 +372,6 @@ export default function HomeScene3D(props: HomeScene3DProps) {
         gl={{ antialias: true }}
         camera={{ position: [camX, camY, camZ], fov: 45, near: 0.1, far: 200 }}
       >
-        <color attach="background" args={["#f5f2ea"]} />
-        <fog attach="fog" args={["#f5f2ea", bounds.radius * 1.5, bounds.radius * 6]} />
         <SceneContents {...props} mobile={mobile} />
       </Canvas>
     </div>

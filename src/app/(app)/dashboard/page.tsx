@@ -13,6 +13,7 @@ import { relativeDay } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SeedDemoButton } from "@/components/shared/seed-demo-button";
 import { DashboardHomeScene } from "@/components/home/dashboard-home-scene";
+import type { WeatherCondition } from "@/lib/three/environment";
 import { AddRoomDialog } from "@/components/home/add-room-dialog";
 
 const ICON_BADGE_GRADIENTS = [
@@ -34,7 +35,15 @@ function greeting() {
   return "Good evening";
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  // QA-only preview hooks for the 3D scene's time-of-day/weather system
+  // (see lib/three/environment.ts) — harmless and invisible when omitted.
+  searchParams: Promise<{ weather?: WeatherCondition; hour?: string }>;
+}) {
+  const { weather, hour } = await searchParams;
+  const timeOverrideHour = hour ? Number(hour) : undefined;
   const supabase = await createClient();
   const {
     data: { user },
@@ -166,6 +175,8 @@ export default async function DashboardPage() {
                             itemsByFurniture={
                               sceneDataByHome[home.id]!.itemsByFurniture
                             }
+                            weather={weather}
+                            timeOverrideHour={timeOverrideHour}
                           />
                         ) : (
                           <div className="flex h-64 items-center justify-center rounded-[20px] bg-gradient-to-br from-[#fdf3c8] via-[#f4a8cf] to-[#c9a1f0] text-[11px] font-medium uppercase tracking-widest text-[#0b0b14]/45 sm:h-72">

@@ -2,6 +2,7 @@
 
 import { HomeSceneBoundary } from "@/components/three/home-scene-boundary";
 import { useFurnitureNavigation } from "@/lib/three/use-furniture-navigation";
+import type { WeatherCondition } from "@/lib/three/environment";
 import type { Furniture, Room } from "@/lib/supabase/types";
 import type { SceneItemSummary } from "@/lib/home-scene-data";
 
@@ -9,10 +10,14 @@ export function DashboardHomeScene({
   rooms,
   furnitureByRoom,
   itemsByFurniture,
+  weather,
+  timeOverrideHour,
 }: {
   rooms: Room[];
   furnitureByRoom: Record<string, Furniture[]>;
   itemsByFurniture?: Record<string, SceneItemSummary[]>;
+  weather?: WeatherCondition;
+  timeOverrideHour?: number;
 }) {
   const { onRoomClick, onFurnitureClick } = useFurnitureNavigation(furnitureByRoom);
 
@@ -24,6 +29,8 @@ export function DashboardHomeScene({
       itemsByFurniture={itemsByFurniture}
       onRoomClick={onRoomClick}
       onFurnitureClick={onFurnitureClick}
+      weather={weather}
+      timeOverrideHour={timeOverrideHour}
     />
   );
 }
