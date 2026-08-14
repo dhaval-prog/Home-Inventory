@@ -99,6 +99,97 @@ function CameraRig({
   );
 }
 
+interface SceneBounds {
+  centerX: number;
+  centerZ: number;
+  radius: number;
+}
+
+/** A small tree: cylinder trunk + a couple of stacked cone/sphere tops. Cute, low-poly. */
+function Tree({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
+  return (
+    <group position={position} scale={scale}>
+      <mesh position={[0, 0.3, 0]} castShadow>
+        <cylinderGeometry args={[0.07, 0.09, 0.6, 8]} />
+        <meshStandardMaterial color="#8a6444" roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 0.85, 0]} castShadow>
+        <coneGeometry args={[0.42, 0.7, 10]} />
+        <meshStandardMaterial color="#5f9155" roughness={0.85} />
+      </mesh>
+      <mesh position={[0, 1.15, 0]} castShadow>
+        <coneGeometry args={[0.3, 0.55, 10]} />
+        <meshStandardMaterial color="#79ab68" roughness={0.85} />
+      </mesh>
+    </group>
+  );
+}
+
+function Bush({ position }: { position: [number, number, number] }) {
+  return (
+    <mesh position={[position[0], 0.18, position[2]]} castShadow>
+      <sphereGeometry args={[0.22, 10, 10]} />
+      <meshStandardMaterial color="#6f9c5e" roughness={0.9} />
+    </mesh>
+  );
+}
+
+/**
+ * Dresses the scene as a small house sitting on its own plot: a grass field, a raised
+ * cream foundation pad sized to the room layout, a low picket fence around the plot,
+ * and a few corner trees/bushes — evoking a "mini home" diorama without capping the
+ * rooms with a roof (which would hide the furniture the rest of the app needs visible).
+ */
+function Yard({ bounds }: { bounds: SceneBounds }) {
+  const padHalf = (bounds.radius * 1.18) / 2;
+  const fenceHalf = padHalf + 0.55;
+  const fencePosts = useMemo(() => {
+    const posts: [number, number, number][] = [];
+    const perSide = 7;
+    for (let i = 0; i <= perSide; i++) {
+      const t = -fenceHalf + (fenceHalf * 2 * i) / perSide;
+      posts.push([bounds.centerX + t, 0, bounds.centerZ - fenceHalf]);
+      posts.push([bounds.centerX + t, 0, bounds.centerZ + fenceHalf]);
+      posts.push([bounds.centerX - fenceHalf, 0, bounds.centerZ + t]);
+      posts.push([bounds.centerX + fenceHalf, 0, bounds.centerZ + t]);
+    }
+    return posts;
+  }, [bounds.centerX, bounds.centerZ, fenceHalf]);
+
+  const treeCorners: [number, number, number][] = [
+    [bounds.centerX - fenceHalf - 0.4, 0, bounds.centerZ - fenceHalf - 0.4],
+    [bounds.centerX + fenceHalf + 0.4, 0, bounds.centerZ - fenceHalf - 0.5],
+    [bounds.centerX - fenceHalf - 0.5, 0, bounds.centerZ + fenceHalf + 0.4],
+    [bounds.centerX + fenceHalf + 0.45, 0, bounds.centerZ + fenceHalf + 0.45],
+  ];
+
+  return (
+    <>
+      {/* Grass field */}
+      <mesh position={[bounds.centerX, -0.02, bounds.centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[bounds.radius * 3, bounds.radius * 3]} />
+        <meshStandardMaterial color="#8fbf6a" roughness={1} />
+      </mesh>
+
+      {/* House foundation pad */}
+      <mesh position={[bounds.centerX, -0.005, bounds.centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[padHalf * 2, padHalf * 2]} />
+        <meshStandardMaterial color="#ede4d0" roughness={0.95} />
+      </mesh>
+
+      {/* Low picket fence */}
+      {fencePosts.map((p, i) => (
+        <mesh key={i} position={[p[0], 0.14, p[2]]} castShadow>
+          <cylinderGeometry args={[0.025, 0.025, 0.28, 6]} />
+          <meshStandardMaterial color="#f5ead8" roughness={0.8} />
+        </mesh>
+      ))}
+
+      {treeCorners.map((p, i) => (i % 2 === 0 ? <Tree key={i} position={p} scale={0.9 + (i % 3) * 0.1} /> : <Bush key={i} position={p} />))}
+    </>
+  );
+}
+
 function SceneContents({
   rooms,
   furnitureByRoom,
@@ -169,10 +260,7 @@ function SceneContents({
       <directionalLight position={[bounds.centerX - 10, 6, bounds.centerZ - 8]} intensity={0.32} color="#dbe6f7" />
       <directionalLight position={[bounds.centerX, 5, bounds.centerZ + 12]} intensity={0.22} color="#f5ece0" />
 
-      <mesh position={[bounds.centerX, -0.01, bounds.centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[bounds.radius * 3, bounds.radius * 3]} />
-        <meshStandardMaterial color="#e5e0d3" roughness={1} />
-      </mesh>
+      <Yard bounds={bounds} />
 
       {!mobile && (
         <ContactShadows
