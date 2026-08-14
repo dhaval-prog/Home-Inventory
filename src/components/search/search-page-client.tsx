@@ -28,12 +28,13 @@ const STORAGE_BADGE_STYLES = [
   "bg-[#0b0b14]/8 text-[#0b0b14]",
 ];
 
-type BrowseTab = "search" | "recent" | "storage";
+type BrowseTab = "search" | "recent" | "storage" | "all";
 
 const BROWSE_TABS: { key: BrowseTab; label: string; icon: typeof Clock }[] = [
   { key: "search", label: "Search", icon: Search },
   { key: "recent", label: "Recently added", icon: Clock },
   { key: "storage", label: "Most used storage", icon: Boxes },
+  { key: "all", label: "All Items", icon: LayoutGrid },
 ];
 
 function BrowseTabBar({ active, onChange }: { active: BrowseTab; onChange: (tab: BrowseTab) => void }) {
@@ -61,13 +62,6 @@ function BrowseTabBar({ active, onChange }: { active: BrowseTab; onChange: (tab:
           </button>
         );
       })}
-      <Link
-        href="/items"
-        className="relative z-10 flex items-center justify-center gap-1.5 rounded-full px-2 py-2 text-[13px] font-medium text-[#0b0b14]/50 transition-colors hover:text-[#0b0b14]"
-      >
-        <LayoutGrid className="size-3.5 shrink-0" />
-        <span className="truncate">All Items</span>
-      </Link>
     </div>
   );
 }
@@ -75,9 +69,11 @@ function BrowseTabBar({ active, onChange }: { active: BrowseTab; onChange: (tab:
 function SearchInner({
   recentItems,
   topAreas,
+  allItems,
 }: {
   recentItems: RecentItem[];
   topAreas: StorageAreaUsage[];
+  allItems: SearchResult[];
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -134,7 +130,9 @@ function SearchInner({
             Try searching for &ldquo;passport&rdquo;, &ldquo;winter&rdquo;, or &ldquo;charger&rdquo;.
           </p>
 
-          {((browseTab === "recent" && recentItems.length > 0) || (browseTab === "storage" && topAreas.length > 0)) && (
+          {((browseTab === "recent" && recentItems.length > 0) ||
+            (browseTab === "storage" && topAreas.length > 0) ||
+            (browseTab === "all" && allItems.length > 0)) && (
             <div className="space-y-5">
               {browseTab === "recent" && recentItems.length > 0 && (
                 <Card className="p-5">
@@ -202,6 +200,8 @@ function SearchInner({
                   </CardContent>
                 </Card>
               )}
+
+              {browseTab === "all" && allItems.length > 0 && <ItemList results={allItems} />}
             </div>
           )}
         </div>
@@ -222,13 +222,15 @@ function SearchInner({
 export function SearchPageClient({
   recentItems,
   topAreas,
+  allItems,
 }: {
   recentItems: RecentItem[];
   topAreas: StorageAreaUsage[];
+  allItems: SearchResult[];
 }) {
   return (
     <Suspense>
-      <SearchInner recentItems={recentItems} topAreas={topAreas} />
+      <SearchInner recentItems={recentItems} topAreas={topAreas} allItems={allItems} />
     </Suspense>
   );
 }
