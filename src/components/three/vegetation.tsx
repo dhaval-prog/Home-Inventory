@@ -74,7 +74,7 @@ function makeTreeSpecs(bounds: Bounds, count: number): TreeSpec[] {
     // Roughly-even angular spacing, then jittered so it never reads as a ring/grid.
     const baseAngle = (i / count) * Math.PI * 2;
     const angle = baseAngle + (rand() - 0.5) * ((Math.PI * 2) / count) * 1.4;
-    const dist = boundary + 0.1 + rand() * 2.5; // some hug the fence, some sit further back as background
+    const dist = boundary + 0.1 + rand() * 3.2; // some hug the fence, some sit further back as background
     const trunkHeight = 0.42 + rand() * 0.34;
     const foliageRadius = 0.3 + rand() * 0.24;
 
@@ -193,10 +193,11 @@ function TreeInstance({ spec, envRef }: { spec: TreeSpec; envRef: MutableRefObje
 }
 
 /**
- * 5-10 trees scattered naturally around the plot boundary — jittered angle/
- * distance (never a ring or grid), varied trunk height, foliage shape/color
- * and a couple with a visible branch stub. Each sways independently in the
- * shared wind (section 14/16: subtle, scale-matched to the miniature house).
+ * A dense ring of trees scattered naturally around the plot boundary —
+ * jittered angle/distance (never a ring or grid), varied trunk height,
+ * foliage shape/color and a couple with a visible branch stub. Each sways
+ * independently in the shared wind (section 14/16: subtle, scale-matched to
+ * the miniature house).
  */
 export function Trees({
   bounds,
@@ -207,7 +208,7 @@ export function Trees({
   envRef: MutableRefObject<EnvironmentTarget>;
   mobile?: boolean;
 }) {
-  const count = mobile ? 5 : 8;
+  const count = mobile ? 9 : 16;
   const specs = useMemo(() => makeTreeSpecs(bounds, count), [bounds, count]);
   return (
     <>
@@ -245,7 +246,7 @@ function makeGroundLayout(bounds: Bounds, mobile: boolean) {
   const innerR = padHalf * 1.05;
   const outerR = boundary + 2.0;
 
-  const grassCount = mobile ? 90 : 190;
+  const grassCount = mobile ? 160 : 380;
   const grass: { position: [number, number, number]; rotationY: number; scale: number }[] = [];
   for (let i = 0; i < grassCount; i++) {
     const angle = rand() * Math.PI * 2;

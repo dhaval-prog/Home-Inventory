@@ -226,15 +226,23 @@ function OutdoorLight({ envRef, x, z }: { envRef: MutableRefObject<EnvironmentTa
 }
 
 /** Elegant residential lamp posts around the yard perimeter/boundary — off by day, gradually glowing on at dusk (section 8-11). */
-export function OutdoorLights({ envRef, bounds }: { envRef: MutableRefObject<EnvironmentTarget>; bounds: Bounds }) {
+export function OutdoorLights({
+  envRef,
+  bounds,
+  mobile = false,
+}: {
+  envRef: MutableRefObject<EnvironmentTarget>;
+  bounds: Bounds;
+  mobile?: boolean;
+}) {
   const positions = useMemo(() => {
     const r = bounds.radius * 1.25;
-    const count = 8;
+    const count = mobile ? 8 : 12;
     return Array.from({ length: count }, (_, i) => {
       const a = (i / count) * Math.PI * 2;
       return [bounds.centerX + Math.cos(a) * r, bounds.centerZ + Math.sin(a) * r] as [number, number];
     });
-  }, [bounds.centerX, bounds.centerZ, bounds.radius]);
+  }, [bounds.centerX, bounds.centerZ, bounds.radius, mobile]);
 
   return (
     <>

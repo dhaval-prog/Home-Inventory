@@ -287,7 +287,7 @@ function SceneContents({
       <Rain envRef={envRef} center={[bounds.centerX, bounds.centerZ]} radius={bounds.radius} lowQuality={mobile} />
       <Lightning envRef={envRef} center={[bounds.centerX, bounds.centerZ]} radius={bounds.radius} />
       <HouseLights envRef={envRef} layout={layout} />
-      <OutdoorLights envRef={envRef} bounds={bounds} />
+      <OutdoorLights envRef={envRef} bounds={bounds} mobile={mobile} />
 
       <Yard bounds={bounds} envRef={envRef} weather={weather ?? "sunny"} mobile={mobile} />
 
