@@ -26,9 +26,10 @@ const STORAGE_BADGE_STYLES = [
   "bg-[#0b0b14]/8 text-[#0b0b14]",
 ];
 
-type BrowseTab = "recent" | "storage";
+type BrowseTab = "search" | "recent" | "storage";
 
 const BROWSE_TABS: { key: BrowseTab; label: string; icon: typeof Clock }[] = [
+  { key: "search", label: "Search", icon: Search },
   { key: "recent", label: "Recently added", icon: Clock },
   { key: "storage", label: "Most used storage", icon: Boxes },
 ];
@@ -36,10 +37,10 @@ const BROWSE_TABS: { key: BrowseTab; label: string; icon: typeof Clock }[] = [
 function BrowseTabBar({ active, onChange }: { active: BrowseTab; onChange: (tab: BrowseTab) => void }) {
   const activeIndex = BROWSE_TABS.findIndex((t) => t.key === active);
   return (
-    <div className="relative grid grid-cols-3 rounded-full bg-[#0b0b14]/5 p-1">
+    <div className="relative grid grid-cols-4 rounded-full bg-[#0b0b14]/5 p-1">
       <span
         className="absolute inset-y-1 left-1 rounded-full bg-white shadow-sm transition-transform duration-300 ease-out"
-        style={{ width: "calc((100% - 0.5rem) / 3)", transform: `translateX(${activeIndex * 100}%)` }}
+        style={{ width: "calc((100% - 0.5rem) / 4)", transform: `translateX(${activeIndex * 100}%)` }}
       />
       {BROWSE_TABS.map((tab) => {
         const Icon = tab.icon;
@@ -83,7 +84,7 @@ function SearchInner({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searched, setSearched] = useState(false);
   const [pending, startTransition] = useTransition();
-  const [browseTab, setBrowseTab] = useState<BrowseTab>("recent");
+  const [browseTab, setBrowseTab] = useState<BrowseTab>("search");
 
   useEffect(() => {
     const term = query.trim();
@@ -106,11 +107,6 @@ function SearchInner({
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-4 md:p-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Search</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Search by item name, category, tag, room, or furniture.</p>
-      </div>
-
       <BrowseTabBar active={browseTab} onChange={setBrowseTab} />
 
       <div className="relative">
@@ -130,7 +126,7 @@ function SearchInner({
             Try searching for &ldquo;passport&rdquo;, &ldquo;winter&rdquo;, or &ldquo;charger&rdquo;.
           </p>
 
-          {(recentItems.length > 0 || topAreas.length > 0) && (
+          {((browseTab === "recent" && recentItems.length > 0) || (browseTab === "storage" && topAreas.length > 0)) && (
             <div className="space-y-5">
               {browseTab === "recent" && recentItems.length > 0 && (
                 <Card className="p-5">
