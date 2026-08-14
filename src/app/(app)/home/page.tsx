@@ -26,10 +26,13 @@ export default async function HomePage({
 }) {
   const { id } = await searchParams;
   const supabase = await createClient();
-  const { data: homes } = await supabase
-    .from("homes")
-    .select("id, name")
-    .order("created_at", { ascending: true });
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const [{ data: homes }, { data: profile }] = await Promise.all([
+    supabase.from("homes").select("id, name").order("created_at", { ascending: true }),
+    supabase.from("profiles").select("*").eq("id", user!.id).maybeSingle(),
+  ]);
 
   if (!homes || homes.length === 0) {
     redirect("/home/new");
@@ -44,6 +47,7 @@ export default async function HomePage({
 
   const { home, rooms, totals } = data!;
   const meta = HOME_TYPE_META[home.home_type];
+  const name = profile?.name || user?.email?.split("@")[0] || "there";
   const subtext =
     `${rooms.length} room${rooms.length === 1 ? "" : "s"}, ${totals.items} item${totals.items === 1 ? "" : "s"} catalogued.` +
     (totals.noPhoto > 0
@@ -54,7 +58,7 @@ export default async function HomePage({
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8">
       <div>
         <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">
-          {greeting()}, {home.name}.
+          {greeting()}, {name}.
         </h1>
         <p className="mt-2 text-[15px] text-[#0b0b14]/60">{subtext}</p>
       </div>
