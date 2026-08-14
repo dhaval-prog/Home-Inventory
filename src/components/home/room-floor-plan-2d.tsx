@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useRouter } from "next/navigation";
 import { getIcon } from "@/lib/icon-map";
@@ -8,6 +8,7 @@ import { getFurnitureRecipe } from "@/lib/three/furniture-recipes";
 import { placeFurniture, ROOM_WIDTH, ROOM_DEPTH } from "@/lib/three/layout";
 import { roomFloorColor } from "@/lib/three/room-colors";
 import { updateFurniturePosition } from "@/lib/actions/furniture";
+import { getCachedFurniturePosition, setCachedFurniturePosition } from "@/lib/three/furniture-position-cache";
 import type { Furniture, Room } from "@/lib/supabase/types";
 
 const SCALE = 42; // pixels per meter
@@ -35,11 +36,34 @@ export function RoomFloorPlan2D({
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
+  // Seed with the server-matching layout (DB position or auto-arranged grid) so
+  // the very first client render matches SSR exactly — the local autosave cache
+  // is only ever consulted after mount, below, to avoid a hydration mismatch.
   const [positions, setPositions] = useState<Record<string, { x: number; z: number }>>(() => {
-    const placed = placeFurniture(furniture, ROOM_WIDTH, ROOM_DEPTH);
+    const placed = placeFurniture(furniture, ROOM_WIDTH, ROOM_DEPTH, { useLocalCache: false });
     return Object.fromEntries(placed.map((p) => [p.furniture.id, { x: p.x, z: p.z }]));
   });
   const dragRef = useRef<DragState | null>(null);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPositions((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const f of furniture) {
+        if (f.position_x != null && f.position_z != null) continue; // DB already authoritative
+        const cached = getCachedFurniturePosition(f.id);
+        if (cached && (next[f.id]?.x !== cached.x || next[f.id]?.z !== cached.z)) {
+          next[f.id] = cached;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    // Runs once after mount, client-only — deliberately not re-syncing on every
+    // `furniture` identity change since drags update `positions` directly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const widthPx = ROOM_WIDTH * SCALE;
   const depthPx = ROOM_DEPTH * SCALE;
@@ -85,6 +109,7 @@ export function RoomFloorPlan2D({
     }
     const pos = positions[id];
     if (!pos) return;
+    setCachedFurniturePosition(id, pos.x, pos.z);
     startTransition(() => {
       updateFurniturePosition(id, room.id, pos.x, pos.z);
     });

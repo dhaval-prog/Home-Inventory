@@ -1,4 +1,5 @@
 import type { Furniture, Room } from "@/lib/supabase/types";
+import { getCachedFurniturePosition } from "@/lib/three/furniture-position-cache";
 
 export const ROOM_WIDTH = 6.4;
 export const ROOM_DEPTH = 5.2;
@@ -79,28 +80,44 @@ export interface PlacedFurniture {
 }
 
 /**
- * Furniture the user has dragged into place (position_x/position_z set) keeps that
- * spot; everything else falls back to the deterministic auto-arranged grid so newly
- * added furniture always starts somewhere sensible.
+ * Furniture the user has dragged into place keeps that spot — from the database
+ * once position_x/position_z are set there, or from the local autosave cache in
+ * the meantime — so the 2D floor plan and 3D scene always agree. Everything else
+ * falls back to the deterministic auto-arranged grid so newly added furniture
+ * always starts somewhere sensible.
  */
-export function placeFurniture(furniture: Furniture[], width: number, depth: number): PlacedFurniture[] {
-  const auto = furniture.filter((f) => f.position_x == null || f.position_z == null);
-  const slots = computeFurnitureSlots(auto.length, width, depth);
-  let autoIndex = 0;
+export function placeFurniture(
+  furniture: Furniture[],
+  width: number,
+  depth: number,
+  options: { useLocalCache?: boolean } = {}
+): PlacedFurniture[] {
+  const { useLocalCache = true } = options;
   const marginX = width / 2 - 0.3;
   const marginZ = depth / 2 - 0.3;
+  const clamp = (x: number, z: number) => ({
+    x: Math.max(-marginX, Math.min(marginX, x)),
+    z: Math.max(-marginZ, Math.min(marginZ, z)),
+  });
 
-  return furniture.map((f) => {
+  const resolved = furniture.map((f) => {
     if (f.position_x != null && f.position_z != null) {
-      return {
-        furniture: f,
-        x: Math.max(-marginX, Math.min(marginX, f.position_x)),
-        z: Math.max(-marginZ, Math.min(marginZ, f.position_z)),
-        rotationY: 0,
-      };
+      return { furniture: f, pos: clamp(f.position_x, f.position_z) };
     }
+    const cached = useLocalCache ? getCachedFurniturePosition(f.id) : null;
+    if (cached) {
+      return { furniture: f, pos: clamp(cached.x, cached.z) };
+    }
+    return { furniture: f, pos: null };
+  });
+
+  const slots = computeFurnitureSlots(resolved.filter((r) => !r.pos).length, width, depth);
+  let autoIndex = 0;
+
+  return resolved.map((r) => {
+    if (r.pos) return { furniture: r.furniture, ...r.pos, rotationY: 0 };
     const slot = slots[autoIndex];
     autoIndex += 1;
-    return { furniture: f, ...slot };
+    return { furniture: r.furniture, ...slot };
   });
 }
