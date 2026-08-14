@@ -1,13 +1,38 @@
 "use client";
 
 import { Suspense, useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search } from "lucide-react";
+import { Search, Home as HomeIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { LocationPath } from "@/components/shared/location-path";
 import { ItemList } from "@/components/items/item-list";
 import { searchItems, type SearchResult } from "@/lib/actions/search";
+import { getCompactIcon } from "@/lib/icon-map";
+import { relativeDay } from "@/lib/utils";
+import type { RecentItem, StorageAreaUsage } from "@/lib/dashboard-data";
 
-function SearchInner() {
+const ICON_BADGE_GRADIENTS = [
+  "from-[#fdf3c8] to-[#f4a8cf]",
+  "from-[#f4a8cf] to-[#c9a1f0]",
+  "from-[#fbdcc4] to-[#f4a8cf]",
+];
+
+const STORAGE_BADGE_STYLES = [
+  "bg-[#0b0b14] text-white",
+  "bg-gradient-to-br from-[#f4a8cf] to-[#c9a1f0] text-[#0b0b14]",
+  "bg-[#0b0b14]/8 text-[#0b0b14]",
+];
+
+function SearchInner({
+  recentItems,
+  topAreas,
+}: {
+  recentItems: RecentItem[];
+  topAreas: StorageAreaUsage[];
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get("q") ?? "";
@@ -54,9 +79,82 @@ function SearchInner() {
       </div>
 
       {!searched && !pending && (
-        <p className="py-12 text-center text-sm text-muted-foreground">
-          Try searching for &ldquo;passport&rdquo;, &ldquo;winter&rdquo;, or &ldquo;charger&rdquo;.
-        </p>
+        <div className="space-y-8">
+          <p className="text-center text-sm text-muted-foreground">
+            Try searching for &ldquo;passport&rdquo;, &ldquo;winter&rdquo;, or &ldquo;charger&rdquo;.
+          </p>
+
+          {(recentItems.length > 0 || topAreas.length > 0) && (
+            <div className="space-y-5">
+              {recentItems.length > 0 && (
+                <Card className="p-5">
+                  <CardHeader className="flex-row items-baseline p-0">
+                    <h3 className="text-[17px] font-semibold tracking-tight">Recently added</h3>
+                    <Link href="/recent" className="ml-auto text-xs font-medium">
+                      All
+                    </Link>
+                  </CardHeader>
+                  <CardContent className="mt-3 p-0">
+                    <ul className="divide-y divide-[#0b0b14]/6">
+                      {recentItems.map(({ item, path }, i) => (
+                        <li key={item.id}>
+                          <Link
+                            href={`/items/${item.id}`}
+                            className="flex items-center gap-3 py-3 first:pt-0 last:pb-0 hover:opacity-80"
+                          >
+                            <span
+                              className={`flex size-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${ICON_BADGE_GRADIENTS[i % ICON_BADGE_GRADIENTS.length]}`}
+                            >
+                              <HomeIcon className="size-3.5 text-[#0b0b14]" />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[13px] font-semibold">{item.name}</span>
+                              <LocationPath nodes={path} container={item.container} className="mt-0.5" />
+                            </span>
+                            <span className="shrink-0 text-[11px] text-[#0b0b14]/45">
+                              {relativeDay(item.created_at)}
+                            </span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
+              )}
+
+              {topAreas.length > 0 && (
+                <Card className="p-5">
+                  <CardHeader className="p-0">
+                    <h3 className="text-[17px] font-semibold tracking-tight">Most used storage</h3>
+                  </CardHeader>
+                  <CardContent className="mt-3 p-0">
+                    <ol className="space-y-3">
+                      {topAreas.map((area, i) => {
+                        const Icon = getCompactIcon(area.icon);
+                        return (
+                          <li key={area.furnitureId} className="flex items-center gap-2.5 text-[13px]">
+                            <span
+                              className={`flex size-[22px] shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${STORAGE_BADGE_STYLES[i % STORAGE_BADGE_STYLES.length]}`}
+                            >
+                              {i + 1}
+                            </span>
+                            <Icon className="size-4 shrink-0 text-[#0b0b14]/45" />
+                            <span className="min-w-0 flex-1 truncate">
+                              {area.roomName} {area.roomName && "·"} {area.furnitureName}
+                            </span>
+                            <Badge variant="secondary" className="shrink-0 bg-[#0b0b14]/7 text-[#0b0b14]">
+                              {area.itemCount} items
+                            </Badge>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {searched && !pending && results.length === 0 && (
@@ -71,10 +169,16 @@ function SearchInner() {
   );
 }
 
-export function SearchPageClient() {
+export function SearchPageClient({
+  recentItems,
+  topAreas,
+}: {
+  recentItems: RecentItem[];
+  topAreas: StorageAreaUsage[];
+}) {
   return (
     <Suspense>
-      <SearchInner />
+      <SearchInner recentItems={recentItems} topAreas={topAreas} />
     </Suspense>
   );
 }
