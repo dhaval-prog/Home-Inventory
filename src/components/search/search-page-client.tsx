@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search, Home as HomeIcon } from "lucide-react";
+import { Search, Home as HomeIcon, Clock, Boxes, LayoutGrid } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +26,49 @@ const STORAGE_BADGE_STYLES = [
   "bg-[#0b0b14]/8 text-[#0b0b14]",
 ];
 
+type BrowseTab = "recent" | "storage";
+
+const BROWSE_TABS: { key: BrowseTab; label: string; icon: typeof Clock }[] = [
+  { key: "recent", label: "Recently added", icon: Clock },
+  { key: "storage", label: "Most used storage", icon: Boxes },
+];
+
+function BrowseTabBar({ active, onChange }: { active: BrowseTab; onChange: (tab: BrowseTab) => void }) {
+  const activeIndex = BROWSE_TABS.findIndex((t) => t.key === active);
+  return (
+    <div className="relative grid grid-cols-3 rounded-full bg-[#0b0b14]/5 p-1">
+      <span
+        className="absolute inset-y-1 left-1 rounded-full bg-white shadow-sm transition-transform duration-300 ease-out"
+        style={{ width: "calc((100% - 0.5rem) / 3)", transform: `translateX(${activeIndex * 100}%)` }}
+      />
+      {BROWSE_TABS.map((tab) => {
+        const Icon = tab.icon;
+        const isActive = tab.key === active;
+        return (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => onChange(tab.key)}
+            className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full px-2 py-2 text-[13px] font-medium transition-colors ${
+              isActive ? "text-[#0b0b14]" : "text-[#0b0b14]/50"
+            }`}
+          >
+            <Icon className="size-3.5 shrink-0" />
+            <span className="truncate">{tab.label}</span>
+          </button>
+        );
+      })}
+      <Link
+        href="/items"
+        className="relative z-10 flex items-center justify-center gap-1.5 rounded-full px-2 py-2 text-[13px] font-medium text-[#0b0b14]/50 transition-colors hover:text-[#0b0b14]"
+      >
+        <LayoutGrid className="size-3.5 shrink-0" />
+        <span className="truncate">All Items</span>
+      </Link>
+    </div>
+  );
+}
+
 function SearchInner({
   recentItems,
   topAreas,
@@ -40,6 +83,7 @@ function SearchInner({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searched, setSearched] = useState(false);
   const [pending, startTransition] = useTransition();
+  const [browseTab, setBrowseTab] = useState<BrowseTab>("recent");
 
   useEffect(() => {
     const term = query.trim();
@@ -67,6 +111,8 @@ function SearchInner({
         <p className="mt-1 text-sm text-muted-foreground">Search by item name, category, tag, room, or furniture.</p>
       </div>
 
+      <BrowseTabBar active={browseTab} onChange={setBrowseTab} />
+
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -86,7 +132,7 @@ function SearchInner({
 
           {(recentItems.length > 0 || topAreas.length > 0) && (
             <div className="space-y-5">
-              {recentItems.length > 0 && (
+              {browseTab === "recent" && recentItems.length > 0 && (
                 <Card className="p-5">
                   <CardHeader className="flex-row items-baseline p-0">
                     <h3 className="text-[17px] font-semibold tracking-tight">Recently added</h3>
@@ -122,7 +168,7 @@ function SearchInner({
                 </Card>
               )}
 
-              {topAreas.length > 0 && (
+              {browseTab === "storage" && topAreas.length > 0 && (
                 <Card className="p-5">
                   <CardHeader className="p-0">
                     <h3 className="text-[17px] font-semibold tracking-tight">Most used storage</h3>
