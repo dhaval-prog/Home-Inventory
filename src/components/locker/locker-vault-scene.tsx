@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { MutableRefObject } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import {
   Billboard,
   ContactShadows,
@@ -25,6 +25,12 @@ import {
 import { Lock, LockOpen } from "lucide-react";
 
 export type VaultPhase = "closed" | "opening" | "open" | "closing";
+
+interface PointerState {
+  x: number;
+  y: number;
+  active: boolean;
+}
 
 function isMobileViewport() {
   return typeof window !== "undefined" && window.innerWidth < 768;
@@ -95,17 +101,18 @@ function CameraDolly({ phase }: { phase: VaultPhase }) {
 function Vault({
   phase,
   hovered,
+  pointerRef,
   onClick,
   onPointerOver,
   onPointerOut,
 }: {
   phase: VaultPhase;
   hovered: boolean;
+  pointerRef: MutableRefObject<PointerState>;
   onClick: () => void;
   onPointerOver: () => void;
   onPointerOut: () => void;
 }) {
-  const { pointer } = useThree();
   const groupRef = useRef<Group>(null);
   const doorPivotRef = useRef<Group>(null);
   const lockRingRef = useRef<Mesh>(null);
@@ -122,11 +129,24 @@ function Vault({
 
     g.position.y = Math.sin(t * 0.6) * 0.06;
 
-    if (phase === "closed") spin.current += delta * 0.18;
-    const targetRotY = spin.current + pointer.x * 0.3;
-    const targetRotX = -pointer.y * 0.15;
-    g.rotation.y = MathUtils.damp(g.rotation.y, targetRotY, 4, delta);
-    g.rotation.x = MathUtils.damp(g.rotation.x, targetRotX, 4, delta);
+    const p = pointerRef.current;
+    let targetRotY: number;
+    let targetRotX: number;
+    if (p.active) {
+      // Full sweep: dragging the mouse across the width spins the vault a
+      // complete 360° so front, both sides, and the back all come into view.
+      targetRotY = MathUtils.mapLinear(p.x, -1, 1, -Math.PI, Math.PI);
+      // Moving toward the top of the canvas tips the vault forward to reveal
+      // its top face; toward the bottom gives a slight look-up angle.
+      targetRotX = MathUtils.mapLinear(p.y, -1, 1, 0.35, -1.1);
+      spin.current = g.rotation.y;
+    } else {
+      if (phase === "closed") spin.current += delta * 0.18;
+      targetRotY = spin.current;
+      targetRotX = 0.12;
+    }
+    g.rotation.y = MathUtils.damp(g.rotation.y, targetRotY, p.active ? 6 : 3, delta);
+    g.rotation.x = MathUtils.damp(g.rotation.x, targetRotX, p.active ? 6 : 3, delta);
 
     const targetScale = hovered ? 1.045 : 1;
     scale.current = MathUtils.damp(scale.current, targetScale, 6, delta);
@@ -251,6 +271,7 @@ function Vault({
 function SceneContents({
   phase,
   hovered,
+  pointerRef,
   onClick,
   onPointerOver,
   onPointerOut,
@@ -258,6 +279,7 @@ function SceneContents({
 }: {
   phase: VaultPhase;
   hovered: boolean;
+  pointerRef: MutableRefObject<PointerState>;
   onClick: () => void;
   onPointerOver: () => void;
   onPointerOut: () => void;
@@ -279,7 +301,14 @@ function SceneContents({
         <Lightformer form="ring" intensity={2} color="#22d3ee" position={[0, -3, -2]} scale={5} />
       </Environment>
 
-      <Vault phase={phase} hovered={hovered} onClick={onClick} onPointerOver={onPointerOver} onPointerOut={onPointerOut} />
+      <Vault
+        phase={phase}
+        hovered={hovered}
+        pointerRef={pointerRef}
+        onClick={onClick}
+        onPointerOver={onPointerOver}
+        onPointerOut={onPointerOut}
+      />
 
       <ContactShadows position={[0, -1.05, 0]} opacity={0.45} blur={2.6} far={3} scale={9} />
       {!mobile && <Sparkles count={35} scale={[6, 4, 6]} size={2} speed={0.25} color="#67e8f9" opacity={0.35} />}
@@ -291,6 +320,7 @@ export default function LockerVaultScene({ onExit }: { onExit: () => void }) {
   const [phase, setPhase] = useState<VaultPhase>("closed");
   const [hovered, setHovered] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointerRef = useRef<PointerState>({ x: 0, y: 0, active: false });
   const mobile = isMobileViewport();
 
   function toggle() {
@@ -308,11 +338,25 @@ export default function LockerVaultScene({ onExit }: { onExit: () => void }) {
 
   return (
     <div className="relative mx-auto max-w-md overflow-hidden rounded-[2rem] bg-gradient-to-b from-[#0b0b14] to-[#15151f] shadow-[0_40px_80px_-20px_rgba(11,11,20,0.6)]">
-      <div className="h-[420px] w-full">
+      <div
+        className="h-[420px] w-full"
+        onPointerMove={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          pointerRef.current = {
+            x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+            y: -(((e.clientY - rect.top) / rect.height) * 2 - 1),
+            active: true,
+          };
+        }}
+        onPointerLeave={() => {
+          pointerRef.current.active = false;
+        }}
+      >
         <Canvas shadows={!mobile} dpr={mobile ? 1 : [1, 2]} gl={{ antialias: true }}>
           <SceneContents
             phase={phase}
             hovered={hovered}
+            pointerRef={pointerRef}
             onClick={toggle}
             onPointerOver={() => setHovered(true)}
             onPointerOut={() => setHovered(false)}
