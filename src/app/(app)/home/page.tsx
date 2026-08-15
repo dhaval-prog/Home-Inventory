@@ -2,7 +2,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getHomeViewData } from "@/lib/home-data";
-import { getHomeSceneData } from "@/lib/home-scene-data";
 import { HOME_TYPE_META } from "@/lib/constants";
 import { Badge } from "@/components/ui/badge";
 import { HomeViewToggle } from "@/components/home/home-view-toggle";
@@ -39,10 +38,7 @@ export default async function HomePage({
   }
 
   const homeId = id && homes.some((h) => h.id === id) ? id : homes[0].id;
-  const [data, sceneData] = await Promise.all([
-    getHomeViewData(supabase, homeId),
-    getHomeSceneData(supabase, homeId),
-  ]);
+  const data = await getHomeViewData(supabase, homeId);
   if (!data) redirect("/home/new");
 
   const { home, rooms, totals } = data!;
@@ -121,7 +117,7 @@ export default async function HomePage({
           action={<AddRoomDialog homeId={homeId} />}
         />
       ) : (
-        <HomeViewToggle homeId={homeId} rooms={rooms} itemsByFurniture={sceneData?.itemsByFurniture} />
+        <HomeViewToggle homeId={homeId} rooms={rooms} />
       )}
     </div>
   );
