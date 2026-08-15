@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Aegis Vault</title>
+<title>Vault</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
@@ -67,7 +67,7 @@
     border:1px solid var(--line);border-radius:16px;
     box-shadow:0 24px 60px -28px rgba(0,0,0,.85),inset 0 1px 0 rgba(255,255,255,.06)}
   main{flex:1;display:flex;align-items:center;justify-content:space-between;padding:0 26px;gap:24px;min-height:0}
-  .side{display:flex;flex-direction:column;gap:14px;width:288px}
+  .side{display:flex;flex-direction:column;gap:14px;width:288px;position:relative}
   .side.right{align-items:flex-end}
 
   /* balance */
@@ -183,8 +183,9 @@
     background:transparent;color:var(--ink-dim);cursor:pointer;font-size:14px;line-height:1}
   .x:hover{color:var(--ink);background:rgba(255,255,255,.06)}
 
-  /* machine control panel */
-  #machPanel{z-index:17;position:fixed;right:26px;bottom:104px;width:330px;padding:20px;
+  /* machine control panel: overlays the same slot as Vault Access / balance
+     rather than stacking in the flex column, so it doesn't inflate .side's height */
+  #machPanel{position:absolute;top:0;left:0;width:100%;padding:20px;
     max-height:calc(100vh - 190px);overflow:auto;
     opacity:0;transform:translateY(16px) scale(.98);pointer-events:none;
     transition:opacity .34s cubic-bezier(.2,.7,.2,1),transform .34s cubic-bezier(.2,.7,.2,1)}
@@ -235,6 +236,7 @@
     #balanceVal{font-size:30px}
     .metaRow{display:none}
     #lockCard{width:100%;max-width:340px;margin:0 auto}
+    #machPanel{width:100%;max-width:340px;left:0;right:0;margin:0 auto}
     main{flex-direction:column;justify-content:flex-end}
     .side.right{display:none}
     footer{padding:0 10px 14px}
@@ -245,7 +247,6 @@
     .sheet.show{transform:none;left:0;top:auto}
     #moneyPanel{left:14px;right:14px;top:auto;bottom:98px;width:auto;transform:translateY(14px)}
     #moneyPanel.show{transform:none}
-    #machPanel{left:14px;right:14px;bottom:88px;width:auto}
   }
 </style>
 </head>
@@ -255,7 +256,7 @@
 
 <div id="ui">
   <header>
-    <div class="brand"><div class="mark"><i></i></div><b>AEGIS VAULT</b></div>
+    <div class="brand"><div class="mark"><i></i></div><b>VAULT</b></div>
     <div class="chip pe" id="statusChip" data-s="locked"><i class="dot"></i><span id="statusText">Locked</span></div>
   </header>
 
@@ -275,6 +276,34 @@
         <div class="metaRow">
           <div><span class="lbl">Auto-save</span><span class="mono" id="metaAuto">—</span></div>
           <div><span class="lbl">Next deposit</span><span class="mono" id="metaNext">—</span></div>
+        </div>
+      </div>
+      <div class="card pe" id="machPanel">
+        <div class="head"><b id="machTitle">Add Money to Vault</b><button class="x" style="position:static" data-close="mach">×</button></div>
+
+        <div class="machStage on" id="stageEntry">
+          <div class="lbl">Amount to count</div>
+          <div id="machAmt" class="dim">₹ 0</div>
+          <div id="machNote">Feed cash into the counter, or enter the amount.</div>
+          <div id="machQuick">
+            <button data-v="500">₹500</button><button data-v="1000">₹1,000</button>
+            <button data-v="2000">₹2,000</button><button data-v="5000">₹5,000</button>
+            <button data-v="10000">₹10,000</button>
+          </div>
+          <div id="machKeys"></div>
+          <button class="btn primary" id="machStart" style="width:100%;justify-content:center">Enter &amp; Start Counting</button>
+        </div>
+
+        <div class="machStage" id="stageCount">
+          <div class="lbl" id="machState">Counting cash</div>
+          <div id="machCounted">₹0</div>
+          <div id="machSub">of ₹0</div>
+          <div id="machProg"><i></i></div>
+          <div id="machDone" style="display:none"></div>
+          <div class="rowBtns" id="machDoneBtns" style="display:none">
+            <button class="btn ghost" id="machCancel">Cancel</button>
+            <button class="btn primary" id="machDeposit">Add to Vault</button>
+          </div>
         </div>
       </div>
     </div>
@@ -379,35 +408,6 @@
     <button data-f="deduct">Deducted</button><button data-f="recurring">Recurring</button>
   </div>
   <div id="txList"></div>
-</div>
-
-<div class="card" id="machPanel">
-  <div class="head"><b id="machTitle">Add Money to Vault</b><button class="x" style="position:static" data-close="mach">×</button></div>
-
-  <div class="machStage on" id="stageEntry">
-    <div class="lbl">Amount to count</div>
-    <div id="machAmt" class="dim">₹ 0</div>
-    <div id="machNote">Feed cash into the counter, or enter the amount.</div>
-    <div id="machQuick">
-      <button data-v="500">₹500</button><button data-v="1000">₹1,000</button>
-      <button data-v="2000">₹2,000</button><button data-v="5000">₹5,000</button>
-      <button data-v="10000">₹10,000</button>
-    </div>
-    <div id="machKeys"></div>
-    <button class="btn primary" id="machStart" style="width:100%;justify-content:center">Enter &amp; Start Counting</button>
-  </div>
-
-  <div class="machStage" id="stageCount">
-    <div class="lbl" id="machState">Counting cash</div>
-    <div id="machCounted">₹0</div>
-    <div id="machSub">of ₹0</div>
-    <div id="machProg"><i></i></div>
-    <div id="machDone" style="display:none"></div>
-    <div class="rowBtns" id="machDoneBtns" style="display:none">
-      <button class="btn ghost" id="machCancel">Cancel</button>
-      <button class="btn primary" id="machDeposit">Add to Vault</button>
-    </div>
-  </div>
 </div>
 
 <div class="card" id="toast"></div>
@@ -788,7 +788,7 @@ async function syncMoney(animate=true){
 syncMoney(false);
 moneyGrp.visible=false;
 
-const tableCash=new THREE.Group();tableCash.name='tableCash';scene.add(tableCash);
+const tableCash=new THREE.Group();tableCash.name='tableCash';tableCash.position.x=.18;scene.add(tableCash);
 [[2.16,.10,.42,0],[2.44,.42,-.86,0],[2.18,-.30,.18,0],[2.56,-.02,1.34,0],
  [2.38,.66,-.36,1],[2.62,.28,.86,0],[2.20,.48,-.15,1],[2.50,.58,.34,0]].forEach(([x,z,rot,stack])=>{
   const b=makeBundle();
@@ -1265,7 +1265,7 @@ $('#machQuick').onclick=e=>{
 });
 function startCounting(){
   if(mach.running)return;
-  if(machVal<100){$('#machNote').textContent='Enter at least ₹100 to start counting.';return;}
+  if(machVal<1){$('#machNote').textContent='Enter at least ₹1 to start counting.';return;}
   mach.target=machVal;
   mach.notes=clamp(Math.round(machVal/500),4,60);
   mach.dur=clamp(1100+mach.notes*95,1600,5200);
