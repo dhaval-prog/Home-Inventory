@@ -97,7 +97,7 @@
   #lockMsg{font-size:11px;color:var(--neg);height:14px;margin-top:8px;letter-spacing:.04em}
 
   /* actions */
-  footer{display:flex;justify-content:center;padding:0 26px 26px}
+  footer{display:flex;justify-content:center;padding:2px 26px 20px}
   #actions{display:flex;gap:8px;padding:9px;opacity:0;transform:translateY(12px);
     transition:opacity .5s,transform .5s;flex-wrap:wrap;justify-content:center}
   #actions.show{opacity:1;transform:none}
@@ -239,7 +239,7 @@
     #machPanel{width:100%;max-width:340px;left:0;right:0;margin:0 auto}
     main{flex-direction:column;justify-content:flex-end}
     .side.right{display:none}
-    footer{padding:0 10px 14px}
+    footer{padding:2px 10px 14px}
     #actions{width:100%;overflow-x:auto;justify-content:flex-start;flex-wrap:nowrap;scrollbar-width:none}
     .btn{padding:11px 13px;font-size:11.5px}
     .sheet{top:auto;bottom:0;left:0;transform:translateY(14px);width:100%;max-width:none;
@@ -259,6 +259,16 @@
     <div class="brand"><div class="mark"><i></i></div><b>VAULT</b></div>
     <div class="chip pe" id="statusChip" data-s="locked"><i class="dot"></i><span id="statusText">Locked</span></div>
   </header>
+
+  <footer>
+    <div class="card pe" id="actions">
+      <button class="btn" data-act="add"><i class="k"></i>Add Money</button>
+      <button class="btn" data-act="count"><i class="k"></i>Count &amp; Add</button>
+      <button class="btn" data-act="recurring"><i class="k"></i>Recurring Savings</button>
+      <button class="btn" data-act="history"><i class="k"></i>Transaction History</button>
+      <button class="btn ghost" data-act="close">Close Vault</button>
+    </div>
+  </footer>
 
   <main>
     <div class="side">
@@ -308,16 +318,6 @@
       </div>
     </div>
   </main>
-
-  <footer>
-    <div class="card pe" id="actions">
-      <button class="btn" data-act="add"><i class="k"></i>Add Money</button>
-      <button class="btn" data-act="count"><i class="k"></i>Count &amp; Add</button>
-      <button class="btn" data-act="recurring"><i class="k"></i>Recurring Savings</button>
-      <button class="btn" data-act="history"><i class="k"></i>Transaction History</button>
-      <button class="btn ghost" data-act="close">Close Vault</button>
-    </div>
-  </footer>
 </div>
 
 <div class="card" id="moneyPanel">
@@ -1045,7 +1045,7 @@ function fitDist(mul=1){
   const dW=(W*1.5/2)/Math.tan(vFov/2)/camera.aspect;
   return Math.max(dH,dW)*mul;
 }
-const CAM_LOCKED=()=>[[.34,.56,fitDist(1.26)],[.20,-.26,0]];
+const CAM_LOCKED=()=>[[.34,.56,fitDist(1.42)],[.20,-.26,0]];
 const CAM_OPEN=()=>CAM_LOCKED();
 const CAM_MACH=()=>CAM_LOCKED();
 
