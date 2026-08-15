@@ -691,7 +691,7 @@ const bolts=[];
 [-1,1].forEach(sy=>[0,1,2].forEach(i=>{
   const b=mesh(new THREE.CylinderGeometry(.05,.05,.22,24),M.brass,'bolt');
   b.rotation.z=Math.PI/2;
-  b.position.set(DW/2-.02,sy*(.15+i*.42)*(i===0?0:1),0);
+  b.position.set(DW/2-.02,sy*(.15+i*.3)*(i===0?0:1),0);
   if(i===0&&sy<0)return;
   b.userData.home=b.position.x;
   door.add(b);bolts.push(b);
@@ -864,24 +864,24 @@ countStack.scale.y=.001;machBody.add(countStack);
 /* slanted control panel */
 const face=new THREE.Group();face.position.set(0,bodyTop+.10,.055);face.rotation.x=-.44;machBody.add(face);
 face.add(mesh(rBox(BW,.3,.06,.035,.01),Mm.shellA,'panelPlate'));
-const bezel=mesh(rBox(.86,.17,.03,.015,.006),Mm.bezel,'panelBezel');
-bezel.position.set(-.03,.02,.035);face.add(bezel);
+const bezel=mesh(rBox(.66,.17,.03,.015,.006),Mm.bezel,'panelBezel');
+bezel.position.set(-.13,.02,.035);face.add(bezel);
 const dispCv=document.createElement('canvas');dispCv.width=1024;dispCv.height=224;
 const dispTex=new THREE.CanvasTexture(dispCv);dispTex.colorSpace=THREE.SRGBColorSpace;
 const dispMat=new THREE.MeshStandardMaterial({map:dispTex,emissiveMap:dispTex,emissive:0xffffff,
   emissiveIntensity:.5,roughness:.3,metalness:0});dispMat.name='mach_display';
-const disp=mesh(new THREE.PlaneGeometry(.82,.155),dispMat,'counterDisplay');
-disp.castShadow=false;disp.position.set(-.03,.02,.052);face.add(disp);
-const dispGlass=mesh(new THREE.PlaneGeometry(.84,.17),new THREE.MeshPhysicalMaterial({
+const disp=mesh(new THREE.PlaneGeometry(.62,.155),dispMat,'counterDisplay');
+disp.castShadow=false;disp.position.set(-.13,.02,.052);face.add(disp);
+const dispGlass=mesh(new THREE.PlaneGeometry(.64,.17),new THREE.MeshPhysicalMaterial({
   color:0x05070a,metalness:0,roughness:.06,transparent:true,opacity:.28,clearcoat:1}),'counterDisplayGlass');
-dispGlass.castShadow=false;dispGlass.position.set(-.03,.02,.056);face.add(dispGlass);
+dispGlass.castShadow=false;dispGlass.position.set(-.13,.02,.056);face.add(dispGlass);
 const keys=[];
 [0,1].forEach(row=>[0,1,2].forEach(col=>{
   const k=mesh(rBox(.062,.052,.024,.01,.004),Mm.keyBlue,'panelKey'+row+col);
   k.position.set(.28+col*.072,.055-row*.062,.04);face.add(k);keys.push(k);
 }));
-const goBtn=mesh(rBox(.062,.062,.026,.012,.004),Mm.keyRed,'counterStartButton');
-goBtn.position.set(.475,.024,.042);face.add(goBtn);goBtn.userData.home=goBtn.position.z;
+const goBtn=mesh(rBox(.2,.062,.026,.012,.004),Mm.keyRed,'counterStartButton');
+goBtn.position.set(.352,-.069,.04);face.add(goBtn);goBtn.userData.home=goBtn.position.z;
 
 /* rear posts + hopper */
 [-1,1].forEach(s=>{
