@@ -453,7 +453,7 @@ const state={
   balance:0,
   txns:[],
   recurring:{enabled:true,amount:10000,day:1,mode:'salary'},
-  open:false,busy:false,filter:'all'
+  open:false,busy:false,filter:'all',accessShown:false
 };
 function addTxn(kind,label,amount,date){
   state.balance += amount;
@@ -673,6 +673,32 @@ screenGlass.position.set(0,.21,.031);screenGlass.castShadow=false;pad.add(screen
 for(let r=0;r<4;r++)for(let c=0;c<3;c++){
   const b=mesh(rBox(.082,.062,.022,.014,.005),M.steel,'key'+(r*3+c));
   b.position.set((c-1)*.098,.08-r*.082,.026);pad.add(b);
+}
+// ready-state glow border: a soft green outline signalling the keypad is live
+const padGlowCv=document.createElement('canvas');padGlowCv.width=256;padGlowCv.height=384;
+(function(){
+  const g=padGlowCv.getContext('2d'),w=padGlowCv.width,h=padGlowCv.height,rad=26,m=12;
+  function rr(x,y,ww,hh,r){
+    g.beginPath();g.moveTo(x+r,y);g.arcTo(x+ww,y,x+ww,y+hh,r);g.arcTo(x+ww,y+hh,x,y+hh,r);
+    g.arcTo(x,y+hh,x,y,r);g.arcTo(x,y,x+ww,y,r);g.closePath();
+  }
+  g.clearRect(0,0,w,h);
+  g.lineWidth=7;g.strokeStyle='rgba(84,242,163,.95)';
+  g.shadowColor='rgba(60,230,150,.9)';g.shadowBlur=24;
+  rr(m,m,w-m*2,h-m*2,rad);g.stroke();
+  g.shadowBlur=0;g.lineWidth=1.5;g.strokeStyle='rgba(206,255,228,.9)';
+  rr(m,m,w-m*2,h-m*2,rad);g.stroke();
+})();
+const padGlowTex=new THREE.CanvasTexture(padGlowCv);padGlowTex.colorSpace=THREE.SRGBColorSpace;
+const padGlowMat=new THREE.MeshBasicMaterial({map:padGlowTex,transparent:true,opacity:.6,
+  blending:THREE.AdditiveBlending,depthWrite:false});
+padGlowMat.name='padGlow';
+const padGlow=mesh(new THREE.PlaneGeometry(.46,.7),padGlowMat,'padGlowFrame');
+padGlow.position.set(0,0,.033);padGlow.castShadow=false;padGlow.receiveShadow=false;pad.add(padGlow);
+let padFlash=0;
+function animPadGlow(now,dt){
+  padFlash*=Math.pow(.003,(dt||16)/1000);
+  padGlowMat.opacity=state.open?0:(.5+Math.sin(now/900)*.14)+(padHot?.22:0)+padFlash;
 }
 function drawScreen(text,tone){
   const g=screenCv.getContext('2d');
@@ -956,19 +982,34 @@ drawDisp('STANDBY','0','idle');
 
 /* hover / click money */
 const ray=new THREE.Raycaster(),ptr=new THREE.Vector2(-9,-9);
-let hovered=null;
+let hovered=null,padHot=false;
 renderer.domElement.addEventListener('pointermove',e=>{
   ptr.x=(e.clientX/innerWidth)*2-1;ptr.y=-(e.clientY/innerHeight)*2+1;
 });
 renderer.domElement.addEventListener('pointerleave',()=>{ptr.set(-9,-9);});
-renderer.domElement.addEventListener('click',()=>{
-  if(!state.open||state.busy)return;
+renderer.domElement.addEventListener('click',e=>{
+  if(state.busy)return;
+  if(!state.open){
+    if(state.accessShown)return;
+    const p=new THREE.Vector2((e.clientX/innerWidth)*2-1,-(e.clientY/innerHeight)*2+1);
+    ray.setFromCamera(p,camera);
+    if(ray.intersectObject(pad,true).length) revealAccessPanel();
+    return;
+  }
   if(machHot) focusMachine();
   else if(hovered) openMoneyPanel();
 });
 let machHot=false;
 function pickScene(){
-  if(!state.open||state.busy){setHover(null);setMachHot(false);return;}
+  if(state.busy){setHover(null);setMachHot(false);padHot=false;return;}
+  if(!state.open){
+    setHover(null);setMachHot(false);
+    if(state.accessShown){padHot=false;renderer.domElement.style.cursor='grab';return;}
+    ray.setFromCamera(ptr,camera);
+    padHot=!!ray.intersectObject(pad,true)[0];
+    renderer.domElement.style.cursor=padHot?'pointer':'grab';
+    return;
+  }
   ray.setFromCamera(ptr,camera);
   const hm=ray.intersectObject(machine,true)[0];
   const hb=moneyGrp.visible? ray.intersectObjects(bundles,true)[0] : null;
@@ -1315,8 +1356,14 @@ KEYS.forEach(k=>{
 function renderPin(){
   $$('#pinDots i').forEach((d,i)=>d.classList.toggle('on',i<pin.length));
 }
+function revealAccessPanel(){
+  if(state.accessShown||state.open||state.busy)return;
+  state.accessShown=true;
+  padFlash=.45;
+  $('#lockCard').classList.add('show');
+}
 function press(k){
-  if(state.busy||state.open)return;
+  if(state.busy||state.open||!state.accessShown)return;
   if(k==='clear'){pin='';$('#lockMsg').textContent='';$('#pinDots').classList.remove('err');renderPin();return;}
   if(k==='enter'){submitPin();return;}
   if(pin.length>=4)return;
@@ -1325,7 +1372,7 @@ function press(k){
   if(pin.length===4)setTimeout(submitPin,260);
 }
 document.addEventListener('keydown',e=>{
-  if(state.open||activeSheet)return;
+  if(state.open||activeSheet||!state.accessShown)return;
   if(/^[0-9]$/.test(e.key))press(e.key);
   if(e.key==='Backspace'){pin=pin.slice(0,-1);renderPin();drawScreen(pin.length?'•'.repeat(pin.length).padEnd(4,'–'):'LOCKED',pin.length?'warn':'bad');}
   if(e.key==='Enter')press('enter');
@@ -1355,6 +1402,7 @@ async function openVault(){
   drawScreen('GRANTED','ok');
   setStatus('Access Granted','granted');
   $('#lockCard').classList.remove('show');
+  state.accessShown=false;
   // dial spin + bolts retract
   const s0=spin.rotation.z;
   tween({dur:1500,ez:ease,up:t=>{spin.rotation.z=s0-t*Math.PI*2.6;}});
@@ -1402,8 +1450,8 @@ async function closeVault(){
   drawScreen('LOCKED','bad');
   setStatus('Vault Locked','locked');
   state.open=false;state.busy=false;
+  state.accessShown=false;
   pin='';renderPin();
-  $('#lockCard').classList.add('show');
   toast('Vault locked · balance protected');
 }
 
@@ -1414,6 +1462,7 @@ function frame(now){
   stepTweens(dt);
   pickScene();
   animMachine(dt,now);
+  animPadGlow(now,dt);
   if(!state.busy){
     idle+=dt;
     vault.rotation.y=Math.sin(idle/5200)*0.012;
@@ -1475,7 +1524,6 @@ renderRecurring();renderTxns();renderAdd();
 requestAnimationFrame(frame);
 setTimeout(()=>{
   $('#loader').classList.add('gone');
-  $('#lockCard').classList.add('show');
 },700);
 </script>
 </body>
