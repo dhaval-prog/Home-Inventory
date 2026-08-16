@@ -82,7 +82,7 @@ export type Item = {
 };
 
 export type VaultTransactionType = "add" | "deduct" | "recurring";
-export type VaultTransactionSource = "manual" | "voice" | "machine";
+export type VaultTransactionSource = "manual" | "voice" | "machine" | "scheduled";
 
 export type VaultTransaction = {
   id: string;
@@ -93,7 +93,28 @@ export type VaultTransaction = {
   comment: string | null;
   label: string | null;
   source: VaultTransactionSource;
+  /** Raw transcript that produced this row, if voice-sourced — audit-only, never shown to the user unprompted. */
+  voice_command: string | null;
+  /** The classified assistant intent (e.g. "deduct_money") that produced this row, if voice-sourced. */
+  normalized_intent: string | null;
+  /** Best-effort link to a matching home-inventory item (e.g. a purchase deduction linked to the item it bought). */
+  related_item_id: string | null;
   created_at: string;
+};
+
+export type VaultRecurringScheduleMode = "salary" | "date";
+
+export type VaultRecurringPlan = {
+  id: string;
+  user_id: string;
+  amount: number;
+  schedule_mode: VaultRecurringScheduleMode;
+  day_of_month: number;
+  enabled: boolean;
+  next_run_date: string;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Database = {
@@ -139,6 +160,12 @@ export type Database = {
         Row: VaultTransaction;
         Insert: Partial<VaultTransaction> & { type: VaultTransactionType; amount: number };
         Update: Partial<VaultTransaction>;
+        Relationships: [];
+      };
+      vault_recurring_plans: {
+        Row: VaultRecurringPlan;
+        Insert: Partial<VaultRecurringPlan> & { amount: number };
+        Update: Partial<VaultRecurringPlan>;
         Relationships: [];
       };
     };

@@ -484,7 +484,7 @@ const NOW=new Date(2026,7,15);
 const state={
   balance:0,
   txns:[],
-  recurring:{enabled:true,amount:10000,day:1,mode:'salary'},
+  recurring:{enabled:false,amount:0,day:1,mode:'salary',nextRunDate:null},
   open:false,busy:false,filter:'all',accessShown:false
 };
 function escapeHtml(s){
@@ -544,6 +544,40 @@ async function postTxn(type,amount,extra){
     state.balance=data.balance;
     vaultChannel&&vaultChannel.postMessage({type:'vault-sync'});
     return {ok:true,transaction:data.transaction,balance:data.balance};
+  }catch(e){
+    return {ok:false,error:'Network error — please try again.'};
+  }
+}
+function applyRecurringPlan(plan){
+  if(!plan)return;
+  state.recurring={
+    enabled:plan.enabled, amount:plan.amount, day:plan.day_of_month, mode:plan.schedule_mode,
+    nextRunDate:plan.next_run_date?new Date(plan.next_run_date+'T00:00:00'):null
+  };
+}
+async function loadRecurringPlan(){
+  try{
+    const res=await fetch('/api/vault/recurring',{credentials:'same-origin'});
+    if(!res.ok)return;
+    const {plan}=await res.json();
+    applyRecurringPlan(plan);
+  }catch(e){
+    console.error('vault: failed to load recurring plan',e);
+  }
+  renderRecurring();
+}
+async function postRecurringPlan(patch){
+  const next=Object.assign({},state.recurring,patch);
+  try{
+    const res=await fetch('/api/vault/recurring',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({amount:next.amount,scheduleMode:next.mode,dayOfMonth:next.day,enabled:next.enabled})
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)return {ok:false,error:data.error||'Something went wrong'};
+    applyRecurringPlan(data.plan);
+    return {ok:true};
   }catch(e){
     return {ok:false,error:'Network error — please try again.'};
   }
@@ -1168,6 +1202,7 @@ function renderBalance(animate=true){
   }});
 }
 function nextDeposit(){
+  if(state.recurring.nextRunDate) return state.recurring.nextRunDate;
   const r=state.recurring;
   const d=new Date(NOW.getFullYear(),NOW.getMonth()+1,r.mode==='salary'?1:r.day);
   return d;
@@ -1278,20 +1313,27 @@ for(let d=1;d<=28;d++){
 }
 $('#recMode').onchange=e=>{state.recurring.mode=e.target.value;renderRecurring();};
 $('#recDay').onchange=e=>{state.recurring.day=+e.target.value;renderRecurring();};
-$('#recTog').onclick=()=>{
-  state.recurring.enabled=!state.recurring.enabled;renderRecurring();
+$('#recTog').onclick=async()=>{
+  const wantEnabled=!state.recurring.enabled;
+  if(wantEnabled&&state.recurring.amount<=0){toast('Enter a monthly amount first','neg');return;}
+  const result=await postRecurringPlan({enabled:wantEnabled});
+  renderRecurring();
+  if(!result.ok){toast(result.error,'neg');return;}
   toast(state.recurring.enabled?'Monthly auto-save enabled':'Recurring savings paused',
     state.recurring.enabled?'pos':null);
 };
-$('#recSave').onclick=()=>{
+$('#recSave').onclick=async()=>{
   if(!state.recurring.amount){toast('Enter a monthly amount','neg');return;}
+  const result=await postRecurringPlan({});
+  if(!result.ok){toast(result.error,'neg');return;}
   renderRecurring();closeSheet();
   toast(state.recurring.enabled
     ? `${inr(state.recurring.amount)} scheduled — next on ${fmtDate(nextDeposit())}`
     : 'Plan saved (paused)','pos');
 };
-$('#recCancel').onclick=()=>{
-  state.recurring.enabled=false;state.recurring.amount=0;renderRecurring();
+$('#recCancel').onclick=async()=>{
+  await postRecurringPlan({enabled:false});
+  renderRecurring();
   closeSheet();toast('Recurring savings cancelled');
 };
 $('#filters').onclick=e=>{
@@ -1676,7 +1718,7 @@ camera.position.set(...CAM_LOCKED()[0]);controls.target.set(...CAM_LOCKED()[1]);
 
 renderRecurring();
 requestAnimationFrame(frame);
-Promise.all([loadVault(),wait(700)]).then(()=>{
+Promise.all([loadVault(),loadRecurringPlan(),wait(700)]).then(()=>{
   $('#loader').classList.add('gone');
 });
 </script>

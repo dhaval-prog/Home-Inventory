@@ -1,12 +1,18 @@
 import { expandSearchTerms, normalizeNumberWords } from "@/lib/voice/synonyms";
-import type { NluResult, ParsedAddEntities, ParsedDeductEntities, ParsedSearchQuery, VaultCategory } from "@/lib/voice/types";
+import { matchCategory } from "@/lib/vault/categories";
+import { parseMoneyExpression } from "@/lib/vault/money-parser";
+import type { NluResult, ParsedAddEntities, ParsedSearchQuery, VaultAction } from "@/lib/voice/types";
 
 /**
  * Zero-dependency, zero-cost intent classifier + entity extractor. This is
  * the guaranteed-working baseline (works with no API key, no setup); an
  * optional Gemini-backed layer (src/lib/voice/nlu-gemini.ts) can produce a
  * richer NluResult when GEMINI_API_KEY is configured, falling back to this
- * module whenever that's unavailable or fails.
+ * module whenever that's unavailable or fails. Only the clear-cut vault
+ * operations are covered here (add/deduct money, balance, total saved,
+ * simple spending queries) — multi-turn corrections, undo/edit/delete by
+ * reference, free-form insights, and multi-intent commands need real
+ * language understanding and are Gemini-only.
  */
 
 const SEARCH_PATTERNS = [
@@ -39,10 +45,11 @@ const ADD_PATTERNS = [
   /\badd them\b\.?\s*$/i,
 ];
 
-// Anchored to the start of the phrase (like ADD_PATTERNS above) so common
-// search phrases sharing a trigger word ("where is my pay stub") never
-// misfire as a vault deduction — every spec example phrases the verb first.
-const DEDUCT_PATTERNS = [
+// All vault patterns are anchored to the start of the phrase (like
+// ADD_PATTERNS above) so common search phrases sharing a trigger word
+// ("where is my pay stub") never misfire — every spec example phrases the
+// verb first, and this is checked before the search/add patterns below.
+const DEDUCT_MONEY_PATTERNS = [
   /^(please\s+)?deduct\b/i,
   /^(please\s+)?remove\b/i,
   /^minus\b/i,
@@ -54,17 +61,21 @@ const DEDUCT_PATTERNS = [
   /^(please\s+)?take\s+out\b/i,
 ];
 
-const CATEGORY_SYNONYMS: [RegExp, VaultCategory][] = [
-  [/\bgroceries?\b/i, "Groceries"],
-  [/\bnew\s+clothes\b|\bclothes\b|\bclothing\b/i, "New Clothes"],
-  [/\bfood\b/i, "Food"],
-  [/\bshopping\b/i, "Shopping"],
-  [/\bbills?\b/i, "Bills"],
-  [/\btravell?ing\b|\btravel\b|\btrip\b/i, "Travel"],
-  [/\bentertainment\b|\bmovies?\b/i, "Entertainment"],
-  [/\bmedical\b|\bdoctor\b|\bhealth\b|\bhospital\b|\bmedicine\b/i, "Medical"],
-  [/\bother\b/i, "Other"],
+const ADD_MONEY_PATTERNS = [
+  /^(please\s+)?add\b.*\bto\s+(my\s+)?(vault|savings)\b/i,
+  /^(please\s+)?put\b.*\b(in(to)?)\s+(my\s+)?(vault|savings)\b/i,
+  /^(please\s+)?deposit\b/i,
 ];
+
+const CHECK_BALANCE_PATTERNS = [
+  /how much (do i have|is in (my|the) vault|('s| is) my (vault )?balance)\b/i,
+  /what('s| is) my (vault )?balance\b/i,
+  /what('s| is) (in|left in) my vault\b/i,
+];
+
+const CHECK_TOTAL_SAVED_PATTERNS = [/how much (have i saved|did i (add|save)|have i added)\b/i, /\btotal (saved|savings)\b/i];
+
+const CHECK_SPENDING_PATTERNS = [/how much (did i|have i) spen[td]\b/i, /what did i spend\b/i];
 
 function stripPunctuation(text: string): string {
   return text.replace(/[.,!?;:]+/g, " ").replace(/\s+/g, " ").trim();
@@ -100,52 +111,64 @@ export function isAddIntent(normalized: string): boolean {
   return ADD_PATTERNS.some((re) => re.test(normalized));
 }
 
-export function isDeductIntent(normalized: string): boolean {
-  return DEDUCT_PATTERNS.some((re) => re.test(normalized));
-}
-
-function matchCategory(text: string): VaultCategory | null {
-  for (const [re, category] of CATEGORY_SYNONYMS) {
-    if (re.test(text)) return category;
-  }
-  return null;
-}
-
-function extractAmount(normalized: string): number | null {
-  const m = normalized.match(/[\d][\d,]*(?:\.\d+)?/);
-  if (!m) return null;
-  const n = parseFloat(m[0].replace(/,/g, ""));
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
 function sentenceCase(text: string): string {
   const t = text.trim();
   return t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
 }
 
-function extractDeductEntities(normalized: string, rawTranscript: string): ParsedDeductEntities {
-  const amount = extractAmount(normalized);
+const EMPTY_VAULT_ACTION: Omit<VaultAction, "intent" | "confidence"> = {
+  amount: null,
+  category: null,
+  comment: null,
+  datePhrase: null,
+  reference: null,
+  newAmount: null,
+  newCategory: null,
+  recurring: null,
+};
 
-  // An explicit "comment: ..." marker always wins, verbatim.
+/** Shared by add_money/deduct_money — amount from the raw transcript (never the 1-6-word-normalized text, which would mangle "five hundred" into "5 hundred"), category/comment from the trailing clause. */
+function extractMoneyEntities(normalized: string, rawTranscript: string): Pick<VaultAction, "amount" | "category" | "comment"> {
+  const amount = parseMoneyExpression(rawTranscript);
+
   const commentMarker = rawTranscript.match(/comment\s*[:\-]?\s*(.+)$/i);
   let comment = commentMarker ? commentMarker[1].trim() : null;
 
-  // "for X" / "on X" trailing phrase drives the category; if present, it
-  // fully accounts for the trailing clause so there's no leftover comment.
   const forOnMatch = normalized.match(/\b(?:for|on)\s+(.+?)[.!]*$/i);
   let category = forOnMatch ? matchCategory(forOnMatch[1]) : null;
   if (!category) category = matchCategory(normalized);
 
-  // No "for/on" and no explicit comment marker — fall back to a trailing
-  // comma clause as the comment, e.g. "minus 2000, bought new clothes".
-  // Requires a leading letter so a thousands-separator comma inside the
-  // amount itself (e.g. "₹1,000") is never mistaken for a comment clause.
   if (!comment && !forOnMatch) {
     const commaClause = rawTranscript.match(/,\s*([a-zA-Z].*)$/);
     if (commaClause) comment = commaClause[1].trim().replace(/[.!]+$/, "");
   }
 
   return { amount, category, comment: comment ? sentenceCase(comment) : null };
+}
+
+function classifyVaultAction(normalized: string, rawTranscript: string): VaultAction | null {
+  if (DEDUCT_MONEY_PATTERNS.some((re) => re.test(normalized))) {
+    return { ...EMPTY_VAULT_ACTION, intent: "deduct_money", confidence: "high", ...extractMoneyEntities(normalized, rawTranscript) };
+  }
+  if (ADD_MONEY_PATTERNS.some((re) => re.test(normalized))) {
+    return { ...EMPTY_VAULT_ACTION, intent: "add_money", confidence: "high", ...extractMoneyEntities(normalized, rawTranscript) };
+  }
+  if (CHECK_BALANCE_PATTERNS.some((re) => re.test(normalized))) {
+    return { ...EMPTY_VAULT_ACTION, intent: "check_balance", confidence: "high" };
+  }
+  if (CHECK_TOTAL_SAVED_PATTERNS.some((re) => re.test(normalized))) {
+    return { ...EMPTY_VAULT_ACTION, intent: "check_total_saved", confidence: "high", datePhrase: normalized };
+  }
+  if (CHECK_SPENDING_PATTERNS.some((re) => re.test(normalized))) {
+    return {
+      ...EMPTY_VAULT_ACTION,
+      intent: "check_spending",
+      confidence: "high",
+      category: matchCategory(normalized),
+      datePhrase: normalized,
+    };
+  }
+  return null;
 }
 
 function buildSearchQuery(normalized: string): ParsedSearchQuery {
@@ -267,11 +290,11 @@ export function parseVoiceTranscript(rawTranscript: string): NluResult {
 
   const normalized = normalizeNumberWords(transcript.toLowerCase());
 
-  // Checked first: DEDUCT_PATTERNS is anchored to the start of the phrase,
-  // so it never overlaps with the search/add patterns below.
-  if (isDeductIntent(normalized)) {
-    return { intent: "deduct", deduct: extractDeductEntities(normalized, transcript) };
-  }
+  // Checked first: every vault pattern is anchored to the start of the
+  // phrase, so none of them overlap with the search/add patterns below.
+  const vaultAction = classifyVaultAction(normalized, transcript);
+  if (vaultAction) return { intent: "vault", actions: [vaultAction] };
+
   if (isSearchIntent(normalized)) {
     return { intent: "search", search: buildSearchQuery(normalized) };
   }

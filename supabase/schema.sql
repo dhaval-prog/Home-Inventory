@@ -154,6 +154,40 @@ create trigger items_set_updated_at
   execute function public.set_updated_at();
 
 -- ─────────────────────────────────────────────────────────────
+-- vault voice assistant — extends vault_transactions with audit/linking
+-- columns, and adds a per-user recurring-deposit plan actually executed by
+-- a scheduled job (see src/app/api/vault/cron/recurring-run).
+-- ─────────────────────────────────────────────────────────────
+alter table public.vault_transactions add column if not exists voice_command text;
+alter table public.vault_transactions add column if not exists normalized_intent text;
+alter table public.vault_transactions add column if not exists related_item_id uuid references public.items (id) on delete set null;
+create index if not exists vault_transactions_related_item_id_idx on public.vault_transactions (related_item_id);
+
+-- widen the source check to allow cron-driven recurring deposits
+alter table public.vault_transactions drop constraint if exists vault_transactions_source_check;
+alter table public.vault_transactions add constraint vault_transactions_source_check
+  check (source in ('manual', 'voice', 'machine', 'scheduled'));
+
+create table if not exists public.vault_recurring_plans (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null unique references auth.users (id) on delete cascade,
+  amount numeric not null check (amount > 0),
+  schedule_mode text not null default 'salary' check (schedule_mode in ('salary', 'date')),
+  day_of_month int not null default 1 check (day_of_month between 1 and 28),
+  enabled boolean not null default true,
+  next_run_date date not null default (current_date + interval '1 month')::date,
+  last_run_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists vault_recurring_plans_set_updated_at on public.vault_recurring_plans;
+create trigger vault_recurring_plans_set_updated_at
+  before update on public.vault_recurring_plans
+  for each row
+  execute function public.set_updated_at();
+
+-- ─────────────────────────────────────────────────────────────
 -- auto-create a profile row when a new auth user signs up
 -- ─────────────────────────────────────────────────────────────
 create or replace function public.handle_new_user()
@@ -189,6 +223,7 @@ alter table public.furniture enable row level security;
 alter table public.storage_locations enable row level security;
 alter table public.items enable row level security;
 alter table public.vault_transactions enable row level security;
+alter table public.vault_recurring_plans enable row level security;
 
 drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own" on public.profiles for select using (auth.uid() = id);
@@ -219,6 +254,10 @@ create policy "items_all_own" on public.items for all
 
 drop policy if exists "vault_transactions_all_own" on public.vault_transactions;
 create policy "vault_transactions_all_own" on public.vault_transactions for all
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "vault_recurring_plans_all_own" on public.vault_recurring_plans;
+create policy "vault_recurring_plans_all_own" on public.vault_recurring_plans for all
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ─────────────────────────────────────────────────────────────

@@ -20,10 +20,14 @@ import {
   resolveVoiceSlot,
   type MissingField,
   type ResolvedLocation,
+  type VaultSessionContext,
+  type VaultVoiceHistoryRow,
+  type VaultVoiceResult,
   type VoiceProcessResult,
 } from "@/lib/actions/voice";
 import type { LocationNode } from "@/lib/location";
 import type { Item } from "@/lib/supabase/types";
+import type { VaultIntent } from "@/lib/voice/types";
 
 type Phase =
   | { kind: "idle" }
@@ -34,13 +38,19 @@ type Phase =
   | { kind: "add-flow"; itemName: string | null; location: ResolvedLocation; missingFields: MissingField[] }
   | { kind: "add-confirm"; itemName: string; location: ResolvedLocation }
   | { kind: "saved"; itemName: string }
-  | { kind: "deduct-done"; amount: number; category: string | null; comment: string | null }
+  | { kind: "vault-result"; intent: VaultIntent; message: string; amount?: number | null; detail?: string }
+  | { kind: "vault-history"; message: string; transactions: VaultVoiceHistoryRow[] }
+  | { kind: "vault-clarify"; question: string }
+  | { kind: "vault-confirm"; message: string }
+  | { kind: "vault-disambiguate"; message: string; options: { id: string; label: string }[] }
   | { kind: "error"; message: string; allowRetry: boolean };
 
 // Same-origin channel the vault's 3D scene (public/vault/vault.html) listens
-// on to refresh its balance/history immediately after a voice deduction,
+// on to refresh its balance/history immediately after a voice-driven change,
 // even though that iframe has no direct access to this React state.
 const vaultChannel = typeof window !== "undefined" && "BroadcastChannel" in window ? new BroadcastChannel("vault-sync") : null;
+
+const EMPTY_VAULT_SESSION: VaultSessionContext = { lastTransaction: null, pending: null };
 
 const ERROR_MESSAGES: Record<VoiceErrorKind, string> = {
   "permission-denied": "Microphone access is required to use voice search.",
@@ -49,6 +59,10 @@ const ERROR_MESSAGES: Record<VoiceErrorKind, string> = {
   network: "Voice recognition needs an internet connection. Please try again.",
   unknown: "Something went wrong with voice recognition. Please try again.",
 };
+
+function inr(amount: number): string {
+  return `₹${Math.round(amount).toLocaleString("en-IN")}`;
+}
 
 function extractRoomId(pathname: string): string | undefined {
   const m = pathname.match(/^\/home\/rooms\/([^/]+)/);
@@ -92,6 +106,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [homeId, setHomeId] = useState<string | undefined>(undefined);
+  const [vaultSession, setVaultSession] = useState<VaultSessionContext>(EMPTY_VAULT_SESSION);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -104,6 +119,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setPhase({ kind: "idle" });
       setQuery("");
+      setVaultSession(EMPTY_VAULT_SESSION);
       speech.reset();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -138,6 +154,60 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
     router.push(`/search?q=${encodeURIComponent(term)}`);
   }
 
+  function applyVaultResult(result: VaultVoiceResult) {
+    if (result.kind === "vault-executed") {
+      setVaultSession({
+        lastTransaction: result.transactionId
+          ? {
+              id: result.transactionId,
+              type: result.intent === "deduct_money" ? "deduct" : result.intent === "add_money" ? "add" : "recurring",
+              amount: result.amount ?? 0,
+              category: result.category ?? null,
+              comment: result.comment ?? null,
+            }
+          : null,
+        pending: null,
+      });
+      setPhase({ kind: "vault-result", intent: result.intent, message: result.message, amount: result.amount });
+      const isDeduct = result.intent === "deduct_money" || result.intent === "delete_transaction" || result.intent === "undo_transaction";
+      toast[isDeduct ? "success" : "success"](result.message);
+      vaultChannel?.postMessage({ type: "vault-sync" });
+      return;
+    }
+    if (result.kind === "vault-answer") {
+      setVaultSession((s) => ({ ...s, pending: null }));
+      setPhase({ kind: "vault-result", intent: result.intent, message: result.message, amount: result.amount, detail: result.detail });
+      return;
+    }
+    if (result.kind === "vault-history") {
+      setVaultSession((s) => ({ ...s, pending: null }));
+      setPhase({ kind: "vault-history", message: result.message, transactions: result.transactions });
+      return;
+    }
+    if (result.kind === "vault-clarify") {
+      setVaultSession((s) => ({ ...s, pending: { kind: result.pendingKind, action: result.pendingAction } }));
+      setPhase({ kind: "vault-clarify", question: result.question });
+      return;
+    }
+    if (result.kind === "vault-confirm") {
+      setVaultSession((s) => ({ ...s, pending: { kind: result.pendingKind, action: result.pendingAction } }));
+      setPhase({ kind: "vault-confirm", message: result.message });
+      return;
+    }
+    if (result.kind === "vault-disambiguate") {
+      setVaultSession((s) => ({
+        ...s,
+        pending: { kind: result.pendingKind, action: result.pendingAction, options: result.options },
+      }));
+      setPhase({ kind: "vault-disambiguate", message: result.message, options: result.options });
+      return;
+    }
+    // vault-error
+    setVaultSession((s) => ({ ...s, pending: null }));
+    toast.error(result.message);
+    setPhase({ kind: "error", message: result.message, allowRetry: true });
+  }
+
   function applyResult(result: VoiceProcessResult) {
     if (result.kind === "search") {
       setPhase(
@@ -152,38 +222,29 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
           ? { kind: "add-confirm", itemName: result.itemName, location: result.location }
           : { kind: "add-flow", itemName: result.itemName, location: result.location, missingFields: missing }
       );
-    } else if (result.kind === "deduct") {
-      setPhase({ kind: "deduct-done", amount: result.amount, category: result.category, comment: result.comment });
-      toast.success(
-        `− ₹${result.amount.toLocaleString("en-IN")}${result.category ? ` · ${result.category}` : ""} deducted from Vault`
-      );
-      vaultChannel?.postMessage({ type: "vault-sync" });
-    } else if (result.kind === "deduct-clarify") {
-      setPhase({
-        kind: "error",
-        message: "I heard a deduction, but not a clear amount. Try saying something like “Deduct ₹500”.",
-        allowRetry: true,
-      });
-    } else if (result.kind === "deduct-error") {
-      toast.error(result.message);
-      setPhase({ kind: "error", message: result.message, allowRetry: false });
     } else if (result.kind === "unclear") {
       setPhase({ kind: "disambiguate", transcript: result.transcript });
+    } else {
+      applyVaultResult(result);
     }
   }
 
-  // Deduction is fire-and-forget by design (no confirmation step) — a brief
-  // confirmation card plus the toast above is enough, then it gets out of the way.
+  // A completed voice transaction is fire-and-forget by design (no
+  // confirmation step) — a brief card plus the toast above is enough, then
+  // it gets out of the way. Answers/history/questions stay open to be read.
   useEffect(() => {
-    if (phase.kind !== "deduct-done") return;
-    const timer = setTimeout(() => onOpenChange(false), 1600);
+    if (phase.kind !== "vault-result") return;
+    if (phase.intent !== "deduct_money" && phase.intent !== "add_money" && phase.intent !== "undo_transaction" && phase.intent !== "delete_transaction" && phase.intent !== "edit_transaction" && phase.intent !== "set_recurring") {
+      return;
+    }
+    const timer = setTimeout(() => onOpenChange(false), 1800);
     return () => clearTimeout(timer);
-  }, [phase.kind, onOpenChange]);
+  }, [phase, onOpenChange]);
 
   async function runCommand(transcript: string) {
     setPhase({ kind: "processing" });
     try {
-      const result = await processVoiceCommand(transcript, { roomId: extractRoomId(pathname) });
+      const result = await processVoiceCommand(transcript, { roomId: extractRoomId(pathname), vaultSession });
       applyResult(result);
     } catch {
       setPhase({ kind: "error", message: "Something went wrong processing that. Please try again.", allowRetry: true });
@@ -277,6 +338,12 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
     router.push(`/items/new?${params.toString()}`);
   }
 
+  function cancelPending() {
+    setVaultSession((s) => ({ ...s, pending: null }));
+    setPhase({ kind: "idle" });
+  }
+
+  const isVaultFollowUp = phase.kind === "vault-clarify" || phase.kind === "vault-confirm" || phase.kind === "vault-disambiguate";
   const showListeningTakeover = speech.isListening && phase.kind !== "add-flow";
 
   return (
@@ -296,6 +363,8 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
               <span className="font-medium text-rose-600">Listening…</span>
               <span className="truncate text-muted-foreground">{speech.transcript}</span>
             </div>
+          ) : isVaultFollowUp ? (
+            <div className="flex-1 text-sm font-medium">Vault Assistant</div>
           ) : (
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -352,7 +421,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
               ) : (
                 <p className="px-1 py-6 text-center text-sm text-muted-foreground">
                   {speech.isSupported
-                    ? "Type to search, or tap the mic to search or add an item by voice."
+                    ? 'Type to search, or tap the mic — try "I spent 500 on groceries" or "how much do I have?"'
                     : "Type to search. Voice search isn't available in this browser."}
                 </p>
               )}
@@ -362,7 +431,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
           {phase.kind === "processing" && (
             <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
               <Loader2 className="size-5 animate-spin" />
-              Searching your home…
+              One moment…
             </div>
           )}
 
@@ -461,13 +530,92 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
             </div>
           )}
 
-          {phase.kind === "deduct-done" && (
+          {phase.kind === "vault-result" && (
             <div className="space-y-1.5 rounded-xl border bg-card p-6 text-center">
-              <p className="text-2xl font-semibold text-rose-600">− ₹{phase.amount.toLocaleString("en-IN")}</p>
-              <p className="text-sm text-muted-foreground">
-                {phase.category ? `${phase.category} deducted from Vault` : "Deducted from Vault"}
+              {phase.amount != null && (
+                <p className={`text-2xl font-semibold ${phase.intent === "deduct_money" ? "text-rose-600" : "text-emerald-600"}`}>
+                  {phase.intent === "deduct_money" ? "− " : phase.intent === "add_money" ? "+ " : ""}
+                  {inr(phase.amount)}
+                </p>
+              )}
+              <p className="text-sm text-muted-foreground">{phase.message}</p>
+              {phase.detail && <p className="text-xs text-muted-foreground">{phase.detail}</p>}
+              <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+                Done
+              </Button>
+            </div>
+          )}
+
+          {phase.kind === "vault-history" && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">{phase.message}</p>
+              <div className="space-y-2">
+                {phase.transactions.map((t) => (
+                  <div key={t.id} className="flex items-center justify-between rounded-lg border bg-card px-3 py-2 text-sm">
+                    <div>
+                      <p className="font-medium">{t.category ?? (t.type === "deduct" ? "Deducted" : t.type === "add" ? "Added" : "Recurring")}</p>
+                      {t.comment && <p className="text-xs text-muted-foreground">{t.comment}</p>}
+                    </div>
+                    <span className={t.type === "deduct" ? "font-medium text-rose-600" : "font-medium text-emerald-600"}>
+                      {t.type === "deduct" ? "− " : "+ "}
+                      {inr(t.amount)}
+                    </span>
+                  </div>
+                ))}
+                {phase.transactions.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">No transactions found.</p>}
+              </div>
+              <div className="text-center">
+                <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+                  Done
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {phase.kind === "vault-clarify" && (
+            <div className="space-y-3 rounded-xl border bg-muted/30 p-4 text-center">
+              <p className="text-sm font-medium">{phase.question}</p>
+              <p className="text-xs text-muted-foreground">
+                {speech.isListening ? speech.transcript || "Listening…" : "Tap the mic to answer, or type below."}
               </p>
-              {phase.comment && <p className="text-xs text-muted-foreground">“{phase.comment}”</p>}
+              <VaultTextReply onSubmit={runCommand} onCancel={cancelPending} />
+            </div>
+          )}
+
+          {phase.kind === "vault-confirm" && (
+            <div className="space-y-3 rounded-xl border bg-muted/30 p-4 text-center">
+              <p className="text-sm font-medium">{phase.message}</p>
+              <div className="flex justify-center gap-2">
+                <Button size="sm" onClick={() => runCommand("yes")}>
+                  Yes, continue
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => runCommand("no")}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {phase.kind === "vault-disambiguate" && (
+            <div className="space-y-3 rounded-xl border bg-muted/30 p-4">
+              <p className="text-center text-sm font-medium">{phase.message}</p>
+              <div className="space-y-2">
+                {phase.options.map((opt, i) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => runCommand(opt.label)}
+                    className="w-full rounded-lg border bg-card px-3 py-2 text-left text-sm hover:bg-muted"
+                  >
+                    <span className="mr-2 text-muted-foreground">{i + 1}.</span>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="text-center">
+                <Button variant="ghost" size="sm" onClick={cancelPending}>
+                  Cancel
+                </Button>
+              </div>
             </div>
           )}
 
@@ -489,5 +637,29 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Minimal typed-reply fallback for vault follow-up questions (the mic already answers via the header's shared mic button). */
+function VaultTextReply({ onSubmit, onCancel }: { onSubmit: (text: string) => void; onCancel: () => void }) {
+  const [value, setValue] = useState("");
+  return (
+    <form
+      className="flex gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!value.trim()) return;
+        onSubmit(value.trim());
+        setValue("");
+      }}
+    >
+      <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder="Type your answer…" className="flex-1" autoFocus />
+      <Button type="submit" size="sm">
+        Send
+      </Button>
+      <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+        Cancel
+      </Button>
+    </form>
   );
 }

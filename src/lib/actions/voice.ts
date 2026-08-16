@@ -5,9 +5,18 @@ import { createClient } from "@/lib/supabase/server";
 import { buildLocationIndex, pathForStorageLocation, type LocationIndex, type LocationNode } from "@/lib/location";
 import { parseTranscript } from "@/lib/voice/nlu";
 import { fuzzyMatchByName } from "@/lib/voice/synonyms";
-import { recordVaultTransaction } from "@/lib/vault/ledger";
+import { processVaultVoiceCommand, type VaultSessionContext, type VaultVoiceResult } from "@/lib/actions/vault-voice";
 import type { ParsedAddEntities } from "@/lib/voice/types";
 import type { Database, Item, StorageLocation } from "@/lib/supabase/types";
+
+export type {
+  VaultSessionContext,
+  VaultVoiceResult,
+  VaultVoiceHistoryRow,
+  VaultPendingState,
+  VaultPendingKind,
+  VaultSessionTransactionSummary,
+} from "@/lib/actions/vault-voice";
 
 export interface VoiceSearchResult {
   kind: "search";
@@ -38,31 +47,7 @@ export interface VoiceUnclearResult {
   transcript: string;
 }
 
-export interface VoiceDeductResult {
-  kind: "deduct";
-  amount: number;
-  category: string | null;
-  comment: string | null;
-  balance: number;
-}
-
-/** Detected a deduction verb but couldn't confidently pull out an amount — never guess and deduct anyway. */
-export interface VoiceDeductClarifyResult {
-  kind: "deduct-clarify";
-}
-
-export interface VoiceDeductErrorResult {
-  kind: "deduct-error";
-  message: string;
-}
-
-export type VoiceProcessResult =
-  | VoiceSearchResult
-  | VoiceAddResult
-  | VoiceDeductResult
-  | VoiceDeductClarifyResult
-  | VoiceDeductErrorResult
-  | VoiceUnclearResult;
+export type VoiceProcessResult = VoiceSearchResult | VoiceAddResult | VoiceUnclearResult | VaultVoiceResult;
 
 /** Priority order from section 19: exact name > partial name > category > tags > description > location. */
 function scoreItemAgainstTerms(item: Item, terms: string[]): number {
@@ -219,18 +204,37 @@ function missingFieldsFor(itemName: string | null, location: ResolvedLocation): 
 }
 
 /**
- * Turns a voice transcript into either search results or an extracted
- * (possibly incomplete) add-item request. `context.roomId`, when the user
- * is voice-searching/adding from inside a specific room page, is used to
- * lightly prioritize that room's items in search and to fill in the room
- * for an add request that didn't mention one (section 21).
+ * Turns a voice transcript into either search results, an extracted
+ * (possibly incomplete) add-item request, or a vault assistant result.
+ * `context.roomId`, when the user is voice-searching/adding from inside a
+ * specific room page, is used to lightly prioritize that room's items in
+ * search and to fill in the room for an add request that didn't mention one
+ * (section 21). `context.vaultSession` carries the ephemeral, client-held
+ * vault conversation state (pending clarification/confirmation, last
+ * transaction) — when a pending vault question is active, this transcript
+ * is almost certainly answering it, so domain classification is skipped
+ * entirely and it goes straight to the vault orchestrator.
  */
 export async function processVoiceCommand(
   transcript: string,
-  context?: { roomId?: string }
+  context?: { roomId?: string; vaultSession?: VaultSessionContext | null }
 ): Promise<VoiceProcessResult> {
+  if (context?.vaultSession?.pending) {
+    return processVaultVoiceCommand(transcript, context.vaultSession);
+  }
+
   const nlu = await parseTranscript(transcript);
+
+  if (nlu.intent === "vault") {
+    return processVaultVoiceCommand(transcript, context?.vaultSession ?? null, nlu);
+  }
+
   const supabase = await createClient();
+
+  if (nlu.intent === "unclear") {
+    return { kind: "unclear", transcript };
+  }
+
   const index = await buildLocationIndex(supabase);
 
   if (nlu.intent === "search") {
@@ -271,33 +275,6 @@ export async function processVoiceCommand(
       itemName: nlu.add.itemNameRaw,
       location,
       missingFields: missingFieldsFor(nlu.add.itemNameRaw, location),
-    };
-  }
-
-  if (nlu.intent === "deduct") {
-    // Never guess an amount — ask the user to repeat it with a number instead.
-    if (nlu.deduct.amount == null) return { kind: "deduct-clarify" };
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { kind: "unclear", transcript };
-
-    const result = await recordVaultTransaction(supabase, user.id, {
-      type: "deduct",
-      amount: nlu.deduct.amount,
-      category: nlu.deduct.category,
-      comment: nlu.deduct.comment,
-      source: "voice",
-    });
-    if (!result.ok) return { kind: "deduct-error", message: result.error };
-
-    return {
-      kind: "deduct",
-      amount: result.transaction.amount,
-      category: result.transaction.category,
-      comment: result.transaction.comment,
-      balance: result.balance,
     };
   }
 
