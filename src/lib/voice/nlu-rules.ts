@@ -1,5 +1,5 @@
 import { expandSearchTerms, normalizeNumberWords } from "@/lib/voice/synonyms";
-import type { NluResult, ParsedAddEntities, ParsedSearchQuery } from "@/lib/voice/types";
+import type { NluResult, ParsedAddEntities, ParsedDeductEntities, ParsedSearchQuery, VaultCategory } from "@/lib/voice/types";
 
 /**
  * Zero-dependency, zero-cost intent classifier + entity extractor. This is
@@ -39,6 +39,33 @@ const ADD_PATTERNS = [
   /\badd them\b\.?\s*$/i,
 ];
 
+// Anchored to the start of the phrase (like ADD_PATTERNS above) so common
+// search phrases sharing a trigger word ("where is my pay stub") never
+// misfire as a vault deduction — every spec example phrases the verb first.
+const DEDUCT_PATTERNS = [
+  /^(please\s+)?deduct\b/i,
+  /^(please\s+)?remove\b/i,
+  /^minus\b/i,
+  /^(i\s+)?paid\b/i,
+  /^(please\s+)?pay\b/i,
+  /^(i\s+)?spent\b/i,
+  /^(i\s+)?(?:'d like to |want to |would like to )?spend\b/i,
+  /^(i\s+)?took\s+out\b/i,
+  /^(please\s+)?take\s+out\b/i,
+];
+
+const CATEGORY_SYNONYMS: [RegExp, VaultCategory][] = [
+  [/\bgroceries?\b/i, "Groceries"],
+  [/\bnew\s+clothes\b|\bclothes\b|\bclothing\b/i, "New Clothes"],
+  [/\bfood\b/i, "Food"],
+  [/\bshopping\b/i, "Shopping"],
+  [/\bbills?\b/i, "Bills"],
+  [/\btravell?ing\b|\btravel\b|\btrip\b/i, "Travel"],
+  [/\bentertainment\b|\bmovies?\b/i, "Entertainment"],
+  [/\bmedical\b|\bdoctor\b|\bhealth\b|\bhospital\b|\bmedicine\b/i, "Medical"],
+  [/\bother\b/i, "Other"],
+];
+
 function stripPunctuation(text: string): string {
   return text.replace(/[.,!?;:]+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -71,6 +98,54 @@ export function isSearchIntent(normalized: string): boolean {
 
 export function isAddIntent(normalized: string): boolean {
   return ADD_PATTERNS.some((re) => re.test(normalized));
+}
+
+export function isDeductIntent(normalized: string): boolean {
+  return DEDUCT_PATTERNS.some((re) => re.test(normalized));
+}
+
+function matchCategory(text: string): VaultCategory | null {
+  for (const [re, category] of CATEGORY_SYNONYMS) {
+    if (re.test(text)) return category;
+  }
+  return null;
+}
+
+function extractAmount(normalized: string): number | null {
+  const m = normalized.match(/[\d][\d,]*(?:\.\d+)?/);
+  if (!m) return null;
+  const n = parseFloat(m[0].replace(/,/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function sentenceCase(text: string): string {
+  const t = text.trim();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+}
+
+function extractDeductEntities(normalized: string, rawTranscript: string): ParsedDeductEntities {
+  const amount = extractAmount(normalized);
+
+  // An explicit "comment: ..." marker always wins, verbatim.
+  const commentMarker = rawTranscript.match(/comment\s*[:\-]?\s*(.+)$/i);
+  let comment = commentMarker ? commentMarker[1].trim() : null;
+
+  // "for X" / "on X" trailing phrase drives the category; if present, it
+  // fully accounts for the trailing clause so there's no leftover comment.
+  const forOnMatch = normalized.match(/\b(?:for|on)\s+(.+?)[.!]*$/i);
+  let category = forOnMatch ? matchCategory(forOnMatch[1]) : null;
+  if (!category) category = matchCategory(normalized);
+
+  // No "for/on" and no explicit comment marker — fall back to a trailing
+  // comma clause as the comment, e.g. "minus 2000, bought new clothes".
+  // Requires a leading letter so a thousands-separator comma inside the
+  // amount itself (e.g. "₹1,000") is never mistaken for a comment clause.
+  if (!comment && !forOnMatch) {
+    const commaClause = rawTranscript.match(/,\s*([a-zA-Z].*)$/);
+    if (commaClause) comment = commaClause[1].trim().replace(/[.!]+$/, "");
+  }
+
+  return { amount, category, comment: comment ? sentenceCase(comment) : null };
 }
 
 function buildSearchQuery(normalized: string): ParsedSearchQuery {
@@ -192,6 +267,11 @@ export function parseVoiceTranscript(rawTranscript: string): NluResult {
 
   const normalized = normalizeNumberWords(transcript.toLowerCase());
 
+  // Checked first: DEDUCT_PATTERNS is anchored to the start of the phrase,
+  // so it never overlaps with the search/add patterns below.
+  if (isDeductIntent(normalized)) {
+    return { intent: "deduct", deduct: extractDeductEntities(normalized, transcript) };
+  }
   if (isSearchIntent(normalized)) {
     return { intent: "search", search: buildSearchQuery(normalized) };
   }

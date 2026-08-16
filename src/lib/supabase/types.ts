@@ -81,6 +81,21 @@ export type Item = {
   updated_at: string;
 };
 
+export type VaultTransactionType = "add" | "deduct" | "recurring";
+export type VaultTransactionSource = "manual" | "voice" | "machine";
+
+export type VaultTransaction = {
+  id: string;
+  user_id: string;
+  type: VaultTransactionType;
+  amount: number;
+  category: string | null;
+  comment: string | null;
+  label: string | null;
+  source: VaultTransactionSource;
+  created_at: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -118,6 +133,12 @@ export type Database = {
         Row: Item;
         Insert: Partial<Item> & { name: string; storage_location_id: string };
         Update: Partial<Item>;
+        Relationships: [];
+      };
+      vault_transactions: {
+        Row: VaultTransaction;
+        Insert: Partial<VaultTransaction> & { type: VaultTransactionType; amount: number };
+        Update: Partial<VaultTransaction>;
         Relationships: [];
       };
     };

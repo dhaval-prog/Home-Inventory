@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { ArrowLeft, Check, Loader2, Search, X } from "lucide-react";
+import { toast } from "sonner";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,13 @@ type Phase =
   | { kind: "add-flow"; itemName: string | null; location: ResolvedLocation; missingFields: MissingField[] }
   | { kind: "add-confirm"; itemName: string; location: ResolvedLocation }
   | { kind: "saved"; itemName: string }
+  | { kind: "deduct-done"; amount: number; category: string | null; comment: string | null }
   | { kind: "error"; message: string; allowRetry: boolean };
+
+// Same-origin channel the vault's 3D scene (public/vault/vault.html) listens
+// on to refresh its balance/history immediately after a voice deduction,
+// even though that iframe has no direct access to this React state.
+const vaultChannel = typeof window !== "undefined" && "BroadcastChannel" in window ? new BroadcastChannel("vault-sync") : null;
 
 const ERROR_MESSAGES: Record<VoiceErrorKind, string> = {
   "permission-denied": "Microphone access is required to use voice search.",
@@ -145,10 +152,33 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
           ? { kind: "add-confirm", itemName: result.itemName, location: result.location }
           : { kind: "add-flow", itemName: result.itemName, location: result.location, missingFields: missing }
       );
-    } else {
+    } else if (result.kind === "deduct") {
+      setPhase({ kind: "deduct-done", amount: result.amount, category: result.category, comment: result.comment });
+      toast.success(
+        `− ₹${result.amount.toLocaleString("en-IN")}${result.category ? ` · ${result.category}` : ""} deducted from Vault`
+      );
+      vaultChannel?.postMessage({ type: "vault-sync" });
+    } else if (result.kind === "deduct-clarify") {
+      setPhase({
+        kind: "error",
+        message: "I heard a deduction, but not a clear amount. Try saying something like “Deduct ₹500”.",
+        allowRetry: true,
+      });
+    } else if (result.kind === "deduct-error") {
+      toast.error(result.message);
+      setPhase({ kind: "error", message: result.message, allowRetry: false });
+    } else if (result.kind === "unclear") {
       setPhase({ kind: "disambiguate", transcript: result.transcript });
     }
   }
+
+  // Deduction is fire-and-forget by design (no confirmation step) — a brief
+  // confirmation card plus the toast above is enough, then it gets out of the way.
+  useEffect(() => {
+    if (phase.kind !== "deduct-done") return;
+    const timer = setTimeout(() => onOpenChange(false), 1600);
+    return () => clearTimeout(timer);
+  }, [phase.kind, onOpenChange]);
 
   async function runCommand(transcript: string) {
     setPhase({ kind: "processing" });
@@ -428,6 +458,16 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
               <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
                 Done
               </Button>
+            </div>
+          )}
+
+          {phase.kind === "deduct-done" && (
+            <div className="space-y-1.5 rounded-xl border bg-card p-6 text-center">
+              <p className="text-2xl font-semibold text-rose-600">− ₹{phase.amount.toLocaleString("en-IN")}</p>
+              <p className="text-sm text-muted-foreground">
+                {phase.category ? `${phase.category} deducted from Vault` : "Deducted from Vault"}
+              </p>
+              {phase.comment && <p className="text-xs text-muted-foreground">“{phase.comment}”</p>}
             </div>
           )}
 

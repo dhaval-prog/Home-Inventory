@@ -260,6 +260,7 @@
   <footer>
     <div class="card pe" id="actions">
       <button class="btn" data-act="add"><i class="k"></i>Add Money</button>
+      <button class="btn" data-act="deduct"><i class="k"></i>Deduct Money</button>
       <button class="btn" data-act="count"><i class="k"></i>Count &amp; Add</button>
       <button class="btn" data-act="recurring"><i class="k"></i>Recurring Savings</button>
       <button class="btn" data-act="history"><i class="k"></i>Transaction History</button>
@@ -351,6 +352,46 @@
   <div class="rowBtns">
     <button class="btn ghost" data-close="sheet">Cancel</button>
     <button class="btn primary" id="addGo">Add to Vault</button>
+  </div>
+</div>
+
+<!-- Deduct money -->
+<div class="card sheet" id="sheetDeduct">
+  <button class="x" data-close="sheet">×</button>
+  <h2>Deduct Money</h2>
+  <p class="note">Record money spent from your vault.</p>
+  <div class="field">
+    <label class="lbl">Amount</label>
+    <input type="text" inputmode="numeric" id="deductAmt" placeholder="₹ 0">
+  </div>
+  <div class="field">
+    <label class="lbl">Category (optional)</label>
+    <select id="deductCategory">
+      <option value="">No category</option>
+      <option>Groceries</option>
+      <option>New Clothes</option>
+      <option>Food</option>
+      <option>Shopping</option>
+      <option>Bills</option>
+      <option>Travel</option>
+      <option>Entertainment</option>
+      <option>Medical</option>
+      <option>Other</option>
+    </select>
+  </div>
+  <div class="field text">
+    <label class="lbl">Comment (optional)</label>
+    <input type="text" id="deductComment" placeholder="e.g. Weekly groceries">
+  </div>
+  <div class="ledger">
+    <div><span>Current balance</span><b id="deductCur">—</b></div>
+    <div><span>Amount being deducted</span><b id="deductDelta">₹0</b></div>
+    <div class="tot"><span>New balance</span><b id="deductNew">—</b></div>
+  </div>
+  <div class="err" id="deductErr"></div>
+  <div class="rowBtns">
+    <button class="btn ghost" data-close="sheet">Cancel</button>
+    <button class="btn primary" id="deductGo">Deduct from Vault</button>
   </div>
 </div>
 
@@ -446,14 +487,83 @@ const state={
   recurring:{enabled:true,amount:10000,day:1,mode:'salary'},
   open:false,busy:false,filter:'all',accessShown:false
 };
-function addTxn(kind,label,amount,date){
-  state.balance += amount;
-  state.txns.unshift({kind,label,amount,date:date||NOW,after:state.balance});
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-addTxn('add','Opening balance',130000,new Date(2026,6,26));
-addTxn('recurring','Monthly Auto-Save',10000,new Date(2026,7,1));
-addTxn('deduct','New Laptop',-25000,new Date(2026,7,12));
-addTxn('add','Monthly Savings',10000,new Date(2026,7,15));
+
+/* ---------- backend persistence ----------
+   This page is a static, non-React iframe with no access to the app's
+   server actions, so it talks to the vault ledger over same-origin JSON
+   fetches (cookies carry the logged-in user's session automatically). The
+   backend (src/lib/vault/ledger.ts) is the single source of truth for the
+   balance — it's always derived from vault_transactions, never cached here. */
+function fromServerTxn(t){
+  const signed=t.type==='deduct'?-t.amount:t.amount;
+  return {
+    id:t.id, kind:t.type, category:t.category||null, comment:t.comment||null,
+    label:t.label||t.category||(t.type==='deduct'?'Money Deducted':'Added to Vault'),
+    amount:signed, date:new Date(t.created_at), after:0
+  };
+}
+function loadFromSummary(summary){
+  const asc=[...(summary.transactions||[])].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  let running=0;
+  const withAfter=asc.map(t=>{
+    const row=fromServerTxn(t);
+    running+=row.amount;
+    row.after=running;
+    return row;
+  });
+  state.txns=withAfter.reverse();
+  state.balance=summary.balance||0;
+}
+async function loadVault(){
+  try{
+    const res=await fetch('/api/vault',{credentials:'same-origin'});
+    if(!res.ok)throw new Error('load failed');
+    loadFromSummary(await res.json());
+  }catch(e){
+    console.error('vault: failed to load balance/history',e);
+  }
+  renderBalance(false);renderTxns();renderAdd();renderDeduct();
+  syncMoney(false);
+}
+async function postTxn(type,amount,extra){
+  extra=extra||{};
+  try{
+    const res=await fetch('/api/vault/transactions',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(Object.assign({type,amount},extra))
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)return {ok:false,error:data.error||'Something went wrong',balance:data.balance};
+    const row=fromServerTxn(data.transaction);
+    row.after=data.balance;
+    state.txns.unshift(row);
+    state.balance=data.balance;
+    vaultChannel&&vaultChannel.postMessage({type:'vault-sync'});
+    return {ok:true,transaction:data.transaction,balance:data.balance};
+  }catch(e){
+    return {ok:false,error:'Network error — please try again.'};
+  }
+}
+/* Cross-context sync: if a voice deduction lands elsewhere in the app (or
+   another tab), refresh so this open vault reflects it immediately. */
+const vaultChannel=('BroadcastChannel' in window)?new BroadcastChannel('vault-sync'):null;
+if(vaultChannel)vaultChannel.onmessage=e=>{
+  if(e&&e.data&&e.data.type==='vault-sync')refreshFromServer();
+};
+async function refreshFromServer(){
+  try{
+    const res=await fetch('/api/vault',{credentials:'same-origin'});
+    if(!res.ok)return;
+    const prevBalance=state.balance;
+    loadFromSummary(await res.json());
+    renderTxns();
+    if(state.balance!==prevBalance){renderBalance(true);await syncMoney(true);}
+  }catch(e){/* ignore — next successful refresh will catch up */}
+}
 
 /* ---------- three.js scene ---------- */
 const host=$('#stage');
@@ -1082,13 +1192,19 @@ function renderRecurring(){
 function renderTxns(){
   const list=$('#txList'),f=state.filter;
   const rows=state.txns.filter(t=>f==='all'||t.kind===f);
-  list.innerHTML=rows.length? rows.map(t=>`
+  list.innerHTML=rows.length? rows.map(t=>{
+    const kindLabel=t.kind==='add'?'Added Money':t.kind==='deduct'?'Money Deducted':'Recurring Savings';
+    const title=t.category?escapeHtml(t.category):escapeHtml(t.label||kindLabel);
+    const meta=[fmtDate(t.date),kindLabel];
+    if(t.comment)meta.push(escapeHtml(t.comment));
+    return `
     <div class="tx">
-      <div class="t">${t.label}</div>
+      <div class="t">${title}</div>
       <div class="a ${t.amount>0?'p':'n'}">${t.amount>0?'+ ':'− '}${inr(Math.abs(t.amount))}</div>
-      <div class="d">${fmtDate(t.date)} · ${t.kind==='add'?'Added Money':t.kind==='deduct'?'Money Deducted':'Recurring Savings'}</div>
+      <div class="d">${meta.join(' · ')}</div>
       <div class="b">Bal ${inr(t.after)}</div>
-    </div>`).join('') : '<div class="empty">No transactions in this filter.</div>';
+    </div>`;
+  }).join('') : '<div class="empty">No transactions in this filter.</div>';
 }
 function totals(){
   const dep=state.txns.filter(t=>t.amount>0).reduce((a,t)=>a+t.amount,0);
@@ -1142,6 +1258,15 @@ function renderAdd(){
 moneyInput($('#addAmt'),v=>{addVal=v;renderAdd();
   $$('#sheetAdd .presets button').forEach(b=>b.classList.toggle('on',+b.dataset.v===v));});
 moneyInput($('#recAmt'),v=>{state.recurring.amount=v;renderRecurring();});
+
+let deductVal=0;
+function renderDeduct(){
+  $('#deductCur').textContent=inr(state.balance);
+  $('#deductDelta').textContent=inr(deductVal);
+  $('#deductNew').textContent=inr(Math.max(0,state.balance-deductVal));
+  $('#deductErr').textContent='';
+}
+moneyInput($('#deductAmt'),v=>{deductVal=v;renderDeduct();});
 $$('.presets').forEach(p=>p.querySelectorAll('button').forEach(b=>b.onclick=()=>{
   const inp=$('#'+p.dataset.for);inp.value=inr(+b.dataset.v);
   inp.dispatchEvent(new Event('input'));
@@ -1183,7 +1308,13 @@ async function doAdd(){
   const note=$('#addNote').value.trim()||'Added to Vault';
   state.busy=true;closeSheet();
   setStatus('Depositing','busy');
-  addTxn('add',note,addVal,NOW);
+  const result=await postTxn('add',addVal,{label:note});
+  if(!result.ok){
+    toast(result.error||'Could not add money','neg');
+    setStatus('Vault Open','open');
+    state.busy=false;
+    return;
+  }
   renderBalance();renderTxns();
   await syncMoney(true);
   toast(`${inr(addVal)} added to vault`,'pos');
@@ -1192,6 +1323,34 @@ async function doAdd(){
   state.busy=false;
 }
 $('#addGo').onclick=doAdd;
+
+async function doDeduct(){
+  if(state.busy)return;
+  if(deductVal<=0){$('#deductErr').textContent='Enter an amount to deduct';return;}
+  if(deductVal>state.balance){
+    $('#deductErr').textContent=`Insufficient vault balance. You currently have ${inr(state.balance)} available.`;
+    return;
+  }
+  const category=$('#deductCategory').value||null;
+  const comment=$('#deductComment').value.trim()||null;
+  state.busy=true;closeSheet();
+  setStatus('Processing','busy');
+  const result=await postTxn('deduct',deductVal,{category,comment});
+  if(!result.ok){
+    toast(result.error||'Could not complete deduction','neg');
+    if(typeof result.balance==='number'){state.balance=result.balance;renderBalance(false);}
+    setStatus('Vault Open','open');
+    state.busy=false;
+    return;
+  }
+  renderBalance();renderTxns();
+  await syncMoney(true);
+  toast(`${inr(deductVal)} deducted${category?' · '+category:''}`,'neg');
+  setStatus('Vault Open','open');
+  deductVal=0;$('#deductAmt').value='';$('#deductCategory').value='';$('#deductComment').value='';renderDeduct();
+  state.busy=false;
+}
+$('#deductGo').onclick=doDeduct;
 
 /* ---------- counting machine flow ---------- */
 let machVal=0, camReturn=null;
@@ -1308,7 +1467,15 @@ $('#machDeposit').onclick=async()=>{
   countStack.material.opacity=1;countStack.material.transparent=false;
   dispLight.color.set(0x9fd9ff);dispLight.intensity=0;
   drawDisp('STANDBY','₹0','idle');
-  addTxn('add','Counted cash deposit',amt,NOW);
+  const result=await postTxn('add',amt,{label:'Counted cash deposit'});
+  if(!result.ok){
+    toast(result.error||'Could not add money','neg');
+    mach.phase='idle';mach.target=0;
+    $('#balanceCard').classList.add('show');
+    setStatus('Vault Open','open');
+    state.busy=false;
+    return;
+  }
   renderBalance();renderTxns();
   tween({dur:900,ez:easeOut,up:t=>{inner.intensity=1.9+Math.sin(t*Math.PI)*1.7;}});
   await syncMoney(true);
@@ -1324,6 +1491,7 @@ $('#actions').onclick=e=>{
   const b=e.target.closest('button[data-act]');if(!b||state.busy||mach.running)return;
   const a=b.dataset.act;
   if(a==='add'){renderAdd();openSheet('#sheetAdd');}
+  if(a==='deduct'){renderDeduct();openSheet('#sheetDeduct');}
   if(a==='count'){focusMachine();}
   if(a==='recurring'){renderRecurring();openSheet('#sheetRec');}
   if(a==='history'){renderTxns();openSheet('#sheetHist');}
@@ -1506,12 +1674,11 @@ renderer.domElement.style.cursor='grab';
 reframe();
 camera.position.set(...CAM_LOCKED()[0]);controls.target.set(...CAM_LOCKED()[1]);
 
-renderBalance(false);
-renderRecurring();renderTxns();renderAdd();
+renderRecurring();
 requestAnimationFrame(frame);
-setTimeout(()=>{
+Promise.all([loadVault(),wait(700)]).then(()=>{
   $('#loader').classList.add('gone');
-},700);
+});
 </script>
 </body>
 </html>

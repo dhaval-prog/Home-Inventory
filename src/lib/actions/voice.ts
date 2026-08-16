@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { buildLocationIndex, pathForStorageLocation, type LocationIndex, type LocationNode } from "@/lib/location";
 import { parseTranscript } from "@/lib/voice/nlu";
 import { fuzzyMatchByName } from "@/lib/voice/synonyms";
+import { recordVaultTransaction } from "@/lib/vault/ledger";
 import type { ParsedAddEntities } from "@/lib/voice/types";
 import type { Database, Item, StorageLocation } from "@/lib/supabase/types";
 
@@ -37,7 +38,31 @@ export interface VoiceUnclearResult {
   transcript: string;
 }
 
-export type VoiceProcessResult = VoiceSearchResult | VoiceAddResult | VoiceUnclearResult;
+export interface VoiceDeductResult {
+  kind: "deduct";
+  amount: number;
+  category: string | null;
+  comment: string | null;
+  balance: number;
+}
+
+/** Detected a deduction verb but couldn't confidently pull out an amount — never guess and deduct anyway. */
+export interface VoiceDeductClarifyResult {
+  kind: "deduct-clarify";
+}
+
+export interface VoiceDeductErrorResult {
+  kind: "deduct-error";
+  message: string;
+}
+
+export type VoiceProcessResult =
+  | VoiceSearchResult
+  | VoiceAddResult
+  | VoiceDeductResult
+  | VoiceDeductClarifyResult
+  | VoiceDeductErrorResult
+  | VoiceUnclearResult;
 
 /** Priority order from section 19: exact name > partial name > category > tags > description > location. */
 function scoreItemAgainstTerms(item: Item, terms: string[]): number {
@@ -246,6 +271,33 @@ export async function processVoiceCommand(
       itemName: nlu.add.itemNameRaw,
       location,
       missingFields: missingFieldsFor(nlu.add.itemNameRaw, location),
+    };
+  }
+
+  if (nlu.intent === "deduct") {
+    // Never guess an amount — ask the user to repeat it with a number instead.
+    if (nlu.deduct.amount == null) return { kind: "deduct-clarify" };
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { kind: "unclear", transcript };
+
+    const result = await recordVaultTransaction(supabase, user.id, {
+      type: "deduct",
+      amount: nlu.deduct.amount,
+      category: nlu.deduct.category,
+      comment: nlu.deduct.comment,
+      source: "voice",
+    });
+    if (!result.ok) return { kind: "deduct-error", message: result.error };
+
+    return {
+      kind: "deduct",
+      amount: result.transaction.amount,
+      category: result.transaction.category,
+      comment: result.transaction.comment,
+      balance: result.balance,
     };
   }
 

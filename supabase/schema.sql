@@ -116,6 +116,25 @@ create index if not exists items_name_idx on public.items using gin (to_tsvector
 create index if not exists items_tags_idx on public.items using gin (tags);
 
 -- ─────────────────────────────────────────────────────────────
+-- vault_transactions — ledger for the Vault savings feature. The balance is
+-- always derived by summing this ledger (never cached), so it can't drift
+-- from the transaction history — see getVaultSummary in src/lib/vault/ledger.ts.
+-- ─────────────────────────────────────────────────────────────
+create table if not exists public.vault_transactions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  type text not null check (type in ('add', 'deduct', 'recurring')),
+  amount numeric not null check (amount > 0),
+  category text,
+  comment text,
+  label text,
+  source text not null default 'manual' check (source in ('manual', 'voice', 'machine')),
+  created_at timestamptz not null default now()
+);
+create index if not exists vault_transactions_user_id_idx on public.vault_transactions (user_id);
+create index if not exists vault_transactions_user_created_idx on public.vault_transactions (user_id, created_at desc);
+
+-- ─────────────────────────────────────────────────────────────
 -- updated_at trigger for items
 -- ─────────────────────────────────────────────────────────────
 create or replace function public.set_updated_at()
@@ -169,6 +188,7 @@ alter table public.rooms enable row level security;
 alter table public.furniture enable row level security;
 alter table public.storage_locations enable row level security;
 alter table public.items enable row level security;
+alter table public.vault_transactions enable row level security;
 
 drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own" on public.profiles for select using (auth.uid() = id);
@@ -195,6 +215,10 @@ create policy "storage_locations_all_own" on public.storage_locations for all
 
 drop policy if exists "items_all_own" on public.items;
 create policy "items_all_own" on public.items for all
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "vault_transactions_all_own" on public.vault_transactions;
+create policy "vault_transactions_all_own" on public.vault_transactions for all
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ─────────────────────────────────────────────────────────────
