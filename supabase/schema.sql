@@ -681,3 +681,33 @@ create policy "household_activity_select_member" on public.household_activity fo
 drop policy if exists "household_activity_insert_member" on public.household_activity;
 create policy "household_activity_insert_member" on public.household_activity for insert
   with check (is_household_member(household_id) and actor_user_id = auth.uid());
+
+-- ─────────────────────────────────────────────────────────────
+-- Home Chat — dedicated to household members, context-aware: a message
+-- that's clearly a contribution or a balance question is auto-answered by
+-- inserting a 'system' reply (reusing the same NLU pipeline as voice/text,
+-- never a parallel one); a message that only *suggests* a goal (an amount
+-- + a savings phrase) gets a `metadata.type = 'suggest_goal'` hint so the
+-- UI can offer a one-click "Create Goal" button — nothing is auto-created
+-- from an ambiguous suggestion, only from an unambiguous contribution.
+-- ─────────────────────────────────────────────────────────────
+create table if not exists public.household_chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  message text not null,
+  kind text not null default 'user' check (kind in ('user', 'system')),
+  metadata jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+create index if not exists household_chat_messages_household_created_idx
+  on public.household_chat_messages (household_id, created_at desc);
+
+alter table public.household_chat_messages enable row level security;
+
+drop policy if exists "household_chat_select_member" on public.household_chat_messages;
+create policy "household_chat_select_member" on public.household_chat_messages for select
+  using (is_household_member(household_id));
+drop policy if exists "household_chat_insert_member" on public.household_chat_messages;
+create policy "household_chat_insert_member" on public.household_chat_messages for insert
+  with check (is_household_member(household_id) and user_id = auth.uid());

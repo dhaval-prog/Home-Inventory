@@ -221,6 +221,19 @@ export type HouseholdActivity = {
   created_at: string;
 };
 
+export type HouseholdChatMessageKind = "user" | "system";
+
+export type HouseholdChatMessage = {
+  id: string;
+  household_id: string;
+  user_id: string;
+  message: string;
+  kind: HouseholdChatMessageKind;
+  /** Rendering hint only — e.g. { type: "suggest_goal", name, target_amount } — never used to auto-mutate anything by itself. */
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -334,6 +347,12 @@ export type Database = {
         Row: HouseholdActivity;
         Insert: Partial<HouseholdActivity> & { household_id: string; actor_user_id: string; kind: string };
         Update: Partial<HouseholdActivity>;
+        Relationships: [];
+      };
+      household_chat_messages: {
+        Row: HouseholdChatMessage;
+        Insert: Partial<HouseholdChatMessage> & { household_id: string; user_id: string; message: string };
+        Update: Partial<HouseholdChatMessage>;
         Relationships: [];
       };
     };
