@@ -61,7 +61,9 @@ export type VaultIntent =
   | "delete_transaction"
   | "set_recurring"
   | "vault_insight"
-  | "help";
+  | "help"
+  | "check_household_balance"
+  | "contribute_household_goal";
 
 export type ConfidenceLevel = "high" | "medium" | "low";
 
@@ -101,6 +103,8 @@ export interface VaultAction {
   recurring: RecurringEntities | null;
   /** Combined vault+inventory query — a physical item named alongside a money question, e.g. "how much did I spend on the TV?". Resolved read-only against inventory; never creates or edits an item. */
   itemEntity: string | null;
+  /** For check_household_balance/contribute_household_goal — the goal name as spoken (e.g. "vacation fund"), fuzzy-matched against the active household's real goals downstream. Null for check_household_balance means "the household's total shared savings," not any one goal. */
+  goalName: string | null;
   confidence: ConfidenceLevel;
 }
 

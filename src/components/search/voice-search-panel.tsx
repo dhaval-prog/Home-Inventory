@@ -12,6 +12,7 @@ import { VoiceResultCard } from "@/components/search/voice-result-card";
 import { VoiceSlotFollowUp } from "@/components/search/voice-slot-followup";
 import { useSpeechRecognition, type VoiceErrorKind } from "@/hooks/use-speech-recognition";
 import { listHomes } from "@/lib/actions/browse";
+import { listMyHouseholds } from "@/lib/actions/household";
 import { createItemFromVoice } from "@/lib/actions/items";
 import {
   getDefaultStorageLocation,
@@ -53,6 +54,18 @@ type Phase =
 const vaultChannel = typeof window !== "undefined" && "BroadcastChannel" in window ? new BroadcastChannel("vault-sync") : null;
 
 const EMPTY_VAULT_SESSION: VaultSessionContext = { lastTransaction: null, pending: null, previousTurnSummary: null };
+
+// A completed action is fire-and-forget by design — the card auto-dismisses
+// after a moment; read-only answers/history/questions stay open to be read.
+const AUTO_DISMISS_INTENTS = new Set<VaultIntent>([
+  "deduct_money",
+  "add_money",
+  "undo_transaction",
+  "delete_transaction",
+  "edit_transaction",
+  "set_recurring",
+  "contribute_household_goal",
+]);
 
 const QUICK_PICKS: { label: string; run: string }[] = [
   { label: "Recently added", run: "show me recently added items" },
@@ -136,12 +149,16 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
   const [promptIndex, setPromptIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [homeId, setHomeId] = useState<string | undefined>(undefined);
+  const [householdId, setHouseholdId] = useState<string | undefined>(undefined);
   const [vaultSession, setVaultSession] = useState<VaultSessionContext>(EMPTY_VAULT_SESSION);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!open) return;
     listHomes().then((homes) => setHomeId(homes[0]?.id));
+    // Defaults to the user's first household membership — explicit multi-household
+    // selection for voice/text happens via the /household page switcher.
+    listMyHouseholds().then((memberships) => setHouseholdId(memberships[0]?.household.id));
   }, [open]);
 
   useEffect(() => {
@@ -276,9 +293,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
   // it gets out of the way. Answers/history/questions stay open to be read.
   useEffect(() => {
     if (phase.kind !== "vault-result") return;
-    if (phase.intent !== "deduct_money" && phase.intent !== "add_money" && phase.intent !== "undo_transaction" && phase.intent !== "delete_transaction" && phase.intent !== "edit_transaction" && phase.intent !== "set_recurring") {
-      return;
-    }
+    if (!AUTO_DISMISS_INTENTS.has(phase.intent)) return;
     const timer = setTimeout(() => onOpenChange(false), 1800);
     return () => clearTimeout(timer);
   }, [phase, onOpenChange]);
@@ -287,7 +302,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setPhase({ kind: "processing" });
     try {
-      const result = await processVoiceCommand(transcript, { roomId: extractRoomId(pathname), vaultSession });
+      const result = await processVoiceCommand(transcript, { roomId: extractRoomId(pathname), vaultSession, householdId });
       applyResult(result);
     } catch {
       setPhase({ kind: "error", message: "Something went wrong processing that. Please try again.", allowRetry: true });
@@ -608,7 +623,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
             <div className="space-y-1.5 rounded-xl border bg-card p-6 text-center">
               {phase.amount != null && (
                 <p className={`text-2xl font-semibold ${phase.intent === "deduct_money" ? "text-rose-600" : "text-emerald-600"}`}>
-                  {phase.intent === "deduct_money" ? "− " : phase.intent === "add_money" ? "+ " : ""}
+                  {phase.intent === "deduct_money" ? "− " : phase.intent === "add_money" || phase.intent === "contribute_household_goal" ? "+ " : ""}
                   {inr(phase.amount)}
                 </p>
               )}

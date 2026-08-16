@@ -77,6 +77,31 @@ const CHECK_TOTAL_SAVED_PATTERNS = [/how much (have i saved|did i (add|save)|hav
 
 const CHECK_SPENDING_PATTERNS = [/how much (did i|have i) spen[td]\b/i, /what did i spend\b/i];
 
+const HOUSEHOLD_BALANCE_PATTERNS = [
+  /how much (have|has) we saved\b/i,
+  /how much (is|do we have) in\b.+\b(fund|goal)\b/i,
+  /what(?:'s| is) (?:in|our) (?:household|shared) (?:savings|vault)\b/i,
+  /how much more do we need\b/i,
+];
+
+const CONTRIBUTE_HOUSEHOLD_PATTERNS = [
+  /^(i'?ll|i will|i can|let me)\s+(contribute|chip in|add|put in)\b/i,
+  /^(please\s+)?contribute\b/i,
+];
+
+function extractHouseholdGoalName(normalized: string): string | null {
+  const m = normalized.match(/how much (?:is|do we have) in\s+(?:the |our )?(.+?)\s*(?:fund|goal)\b/i);
+  return m ? m[1].trim() : null;
+}
+
+function extractContributeEntities(normalized: string, rawTranscript: string): { amount: number | null; goalName: string | null } {
+  const amount = parseMoneyExpression(rawTranscript);
+  const m =
+    normalized.match(/\bto\s+(?:the |our )?(.+?)\s*(?:fund|goal)?[.!]*$/i) ??
+    normalized.match(/\bfor\s+(?:the |our )?(.+?)\s*(?:fund|goal)?[.!]*$/i);
+  return { amount, goalName: m ? m[1].trim() : null };
+}
+
 function stripPunctuation(text: string): string {
   return text.replace(/[.,!?;:]+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -126,6 +151,7 @@ const EMPTY_VAULT_ACTION: Omit<VaultAction, "intent" | "confidence"> = {
   newCategory: null,
   recurring: null,
   itemEntity: null,
+  goalName: null,
 };
 
 /** Shared by add_money/deduct_money — amount from the raw transcript (never the 1-6-word-normalized text, which would mangle "five hundred" into "5 hundred"), category/comment from the trailing clause. */
@@ -148,6 +174,19 @@ function extractMoneyEntities(normalized: string, rawTranscript: string): Pick<V
 }
 
 function classifyVaultAction(normalized: string, rawTranscript: string): VaultAction | null {
+  if (CONTRIBUTE_HOUSEHOLD_PATTERNS.some((re) => re.test(normalized))) {
+    const { amount, goalName } = extractContributeEntities(normalized, rawTranscript);
+    return {
+      ...EMPTY_VAULT_ACTION,
+      intent: "contribute_household_goal",
+      confidence: amount != null && goalName ? "high" : "low",
+      amount,
+      goalName,
+    };
+  }
+  if (HOUSEHOLD_BALANCE_PATTERNS.some((re) => re.test(normalized))) {
+    return { ...EMPTY_VAULT_ACTION, intent: "check_household_balance", confidence: "high", goalName: extractHouseholdGoalName(normalized) };
+  }
   if (DEDUCT_MONEY_PATTERNS.some((re) => re.test(normalized))) {
     return { ...EMPTY_VAULT_ACTION, intent: "deduct_money", confidence: "high", ...extractMoneyEntities(normalized, rawTranscript) };
   }

@@ -6,7 +6,9 @@ import { buildLocationIndex, pathForStorageLocation, type LocationIndex, type Lo
 import { parseTranscript } from "@/lib/voice/nlu";
 import { fuzzyMatchByName } from "@/lib/voice/synonyms";
 import { processVaultVoiceCommand, type VaultSessionContext, type VaultVoiceResult } from "@/lib/actions/vault-voice";
-import type { InventoryAction, ParsedAddEntities } from "@/lib/voice/types";
+import { processHouseholdVoiceCommand } from "@/lib/actions/household-voice";
+import { listGoals } from "@/lib/actions/household-goals";
+import type { InventoryAction, ParsedAddEntities, VaultAction } from "@/lib/voice/types";
 import type { Database, Item, StorageLocation } from "@/lib/supabase/types";
 
 export type {
@@ -382,6 +384,8 @@ function missingFieldsFor(itemName: string | null, location: ResolvedLocation): 
   return missing;
 }
 
+const HOUSEHOLD_VAULT_INTENTS = new Set<VaultAction["intent"]>(["check_household_balance", "contribute_household_goal"]);
+
 /**
  * Turns a voice transcript into either search results, an extracted
  * (possibly incomplete) add-item request, or a vault assistant result.
@@ -392,20 +396,37 @@ function missingFieldsFor(itemName: string | null, location: ResolvedLocation): 
  * vault conversation state (pending clarification/confirmation, last
  * transaction) — when a pending vault question is active, this transcript
  * is almost certainly answering it, so domain classification is skipped
- * entirely and it goes straight to the vault orchestrator.
+ * entirely and it goes straight to the vault orchestrator. `context.householdId`
+ * is the household the user currently has selected (via the household
+ * switcher) — when set, its active goal names are fed to Gemini so "the
+ * vacation fund" resolves to a real goal, and a classified household intent
+ * (check_household_balance/contribute_household_goal) routes to the
+ * household orchestrator instead of the personal-vault one.
  */
 export async function processVoiceCommand(
   transcript: string,
-  context?: { roomId?: string; vaultSession?: VaultSessionContext | null }
+  context?: { roomId?: string; vaultSession?: VaultSessionContext | null; householdId?: string | null }
 ): Promise<VoiceProcessResult> {
   if (context?.vaultSession?.pending) {
     return processVaultVoiceCommand(transcript, context.vaultSession);
   }
 
   const previousTurnSummary = context?.vaultSession?.previousTurnSummary ?? null;
-  const nlu = await parseTranscript(transcript, previousTurnSummary ? { previousTurnSummary } : undefined);
+  const householdGoalNames = context?.householdId
+    ? (await listGoals(context.householdId, { status: "active" })).map((g) => g.goal.name)
+    : [];
+  const geminiContext =
+    previousTurnSummary || householdGoalNames.length > 0 ? { previousTurnSummary, householdGoalNames } : undefined;
+  const nlu = await parseTranscript(transcript, geminiContext);
 
   if (nlu.intent === "vault") {
+    const first = nlu.actions[0];
+    if (first && HOUSEHOLD_VAULT_INTENTS.has(first.intent)) {
+      if (!context?.householdId) {
+        return { kind: "vault-error", message: "You're not part of a household yet — create or join one first." };
+      }
+      return processHouseholdVoiceCommand(context.householdId, first);
+    }
     return processVaultVoiceCommand(transcript, context?.vaultSession ?? null, nlu);
   }
 

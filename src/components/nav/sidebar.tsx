@@ -13,6 +13,7 @@ import {
   Clock,
   Lock,
   ShieldCheck,
+  Users,
   Settings,
   Menu,
   type LucideIcon,
@@ -31,6 +32,7 @@ const ICONS: Record<string, LucideIcon> = {
   Clock,
   Lock,
   ShieldCheck,
+  Users,
   Settings,
 };
 

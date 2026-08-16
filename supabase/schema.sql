@@ -282,3 +282,397 @@ create policy "item_photos_update_own" on storage.objects for update
 drop policy if exists "item_photos_delete_own" on storage.objects;
 create policy "item_photos_delete_own" on storage.objects for delete
   using (bucket_id = 'item-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- ─────────────────────────────────────────────────────────────
+-- Households — multi-member households layered on top of the (unchanged)
+-- per-user vault_transactions ledger. Deliberately separate from the
+-- existing `homes` table (which is the single-owner 3D inventory concept);
+-- a household is a group of people, not a physical house model.
+-- ─────────────────────────────────────────────────────────────
+create table if not exists public.households (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  name text not null,
+  owner_id uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  settings jsonb not null default '{}'
+);
+
+create table if not exists public.household_members (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  role text not null check (role in ('owner', 'member', 'viewer', 'limited_member')),
+  joined_at timestamptz not null default now(),
+  unique (household_id, user_id)
+);
+create index if not exists household_members_household_id_idx on public.household_members (household_id);
+create index if not exists household_members_user_id_idx on public.household_members (user_id);
+
+create table if not exists public.household_invites (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households (id) on delete cascade,
+  token text not null unique,
+  created_by uuid not null references auth.users (id) on delete cascade,
+  role text not null check (role in ('member', 'viewer', 'limited_member')),
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'revoked', 'expired')),
+  expires_at timestamptz not null default (now() + interval '7 days'),
+  created_at timestamptz not null default now()
+);
+create index if not exists household_invites_household_id_idx on public.household_invites (household_id);
+
+-- Container for a pooled sum of money — every household gets exactly one
+-- 'shared' vault (auto-created, see the trigger below); every household_goals
+-- row owns exactly one 'goal' vault. Balance is never stored here — always
+-- derived live by summing household_vault_transactions, mirroring how
+-- vault_transactions/getVaultSummary already works for personal vaults.
+create table if not exists public.household_vaults (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households (id) on delete cascade,
+  vault_type text not null check (vault_type in ('shared', 'goal')),
+  name text not null,
+  visibility text not null default 'home' check (visibility in ('private', 'selected', 'home')),
+  created_by uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create index if not exists household_vaults_household_id_idx on public.household_vaults (household_id);
+
+create table if not exists public.household_goals (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households (id) on delete cascade,
+  vault_id uuid not null unique references public.household_vaults (id) on delete cascade,
+  created_by uuid not null references auth.users (id) on delete cascade,
+  name text not null,
+  icon text not null default '🎯',
+  target_amount numeric not null check (target_amount > 0),
+  deadline date,
+  status text not null default 'active' check (status in ('active', 'completed', 'archived')),
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists household_goals_household_id_idx on public.household_goals (household_id);
+
+drop trigger if exists household_goals_set_updated_at on public.household_goals;
+create trigger household_goals_set_updated_at
+  before update on public.household_goals
+  for each row
+  execute function public.set_updated_at();
+
+-- Ledger for household_vaults (both 'shared' and 'goal' vault types share
+-- this one table). `source_personal_txn_id` links a contribution back to the
+-- personal-vault deduction that funded it, when applicable — see the
+-- contribute_to_household_vault() RPC below, which is the only place this
+-- table should normally be written to.
+create table if not exists public.household_vault_transactions (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households (id) on delete cascade,
+  vault_id uuid not null references public.household_vaults (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  type text not null check (type in ('add', 'deduct')),
+  amount numeric not null check (amount > 0),
+  source text not null default 'external' check (source in ('personal_vault', 'external')),
+  source_personal_txn_id uuid references public.vault_transactions (id) on delete set null,
+  comment text,
+  visibility text not null default 'home' check (visibility in ('private', 'selected', 'home')),
+  created_at timestamptz not null default now()
+);
+create index if not exists household_vault_txns_household_id_idx on public.household_vault_transactions (household_id);
+create index if not exists household_vault_txns_vault_id_idx on public.household_vault_transactions (vault_id);
+create index if not exists household_vault_txns_vault_created_idx on public.household_vault_transactions (vault_id, created_at desc);
+
+create table if not exists public.household_activity (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households (id) on delete cascade,
+  actor_user_id uuid not null references auth.users (id) on delete cascade,
+  kind text not null,
+  payload jsonb not null default '{}',
+  visibility text not null default 'home' check (visibility in ('private', 'selected', 'home')),
+  created_at timestamptz not null default now()
+);
+create index if not exists household_activity_household_created_idx on public.household_activity (household_id, created_at desc);
+
+-- ─────────────────────────────────────────────────────────────
+-- Household RLS helpers — SECURITY DEFINER so a policy on household_members
+-- itself can call is_household_member()/is_household_owner() without
+-- recursively re-evaluating household_members' own RLS policy.
+-- ─────────────────────────────────────────────────────────────
+create or replace function public.is_household_member(p_household_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from household_members
+    where household_id = p_household_id and user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_household_owner(p_household_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from household_members
+    where household_id = p_household_id and user_id = auth.uid() and role = 'owner'
+  );
+$$;
+
+create or replace function public.can_contribute_to_household(p_household_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from household_members
+    where household_id = p_household_id and user_id = auth.uid() and role in ('owner', 'member', 'limited_member')
+  );
+$$;
+
+-- On creating a household, automatically add the creator as 'owner' and
+-- create the household's single shared vault — never left to client code to
+-- do as two separate, possibly-partial steps.
+create or replace function public.handle_new_household()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.household_members (household_id, user_id, role)
+  values (new.id, new.owner_id, 'owner');
+
+  insert into public.household_vaults (household_id, vault_type, name, created_by)
+  values (new.id, 'shared', 'Household Savings', new.owner_id);
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_household_created on public.households;
+create trigger on_household_created
+  after insert on public.households
+  for each row
+  execute function public.handle_new_household();
+
+-- ─────────────────────────────────────────────────────────────
+-- Atomic contribution — the one place money moves between a personal vault
+-- and a household vault. SECURITY INVOKER: it runs as the calling user, so
+-- every insert inside it still passes through the normal RLS policies below
+-- (defense in depth) — it exists purely to make the two-table write atomic,
+-- never to bypass permission checks.
+-- ─────────────────────────────────────────────────────────────
+create or replace function public.contribute_to_household_vault(
+  p_vault_id uuid,
+  p_amount numeric,
+  p_source text,
+  p_comment text default null
+)
+returns jsonb
+language plpgsql
+security invoker set search_path = public
+as $$
+declare
+  v_household_id uuid;
+  v_vault_name text;
+  v_personal_txn_id uuid;
+  v_personal_balance numeric;
+begin
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'Amount must be greater than zero';
+  end if;
+  if p_source not in ('personal_vault', 'external') then
+    raise exception 'Invalid contribution source';
+  end if;
+
+  select household_id, name into v_household_id, v_vault_name from household_vaults where id = p_vault_id;
+  if v_household_id is null then
+    raise exception 'Vault not found';
+  end if;
+  if not can_contribute_to_household(v_household_id) then
+    raise exception 'You do not have permission to contribute to this household';
+  end if;
+
+  if p_source = 'personal_vault' then
+    select coalesce(sum(case when type = 'add' then amount when type = 'deduct' then -amount else 0 end), 0)
+      into v_personal_balance
+      from vault_transactions
+      where user_id = auth.uid();
+
+    if v_personal_balance < p_amount then
+      raise exception 'Insufficient personal vault balance';
+    end if;
+
+    insert into vault_transactions (user_id, type, amount, comment, source)
+      values (auth.uid(), 'deduct', p_amount, coalesce(p_comment, 'Contribution to household vault'), 'manual')
+      returning id into v_personal_txn_id;
+  end if;
+
+  insert into household_vault_transactions
+    (household_id, vault_id, user_id, type, amount, source, source_personal_txn_id, comment)
+    values (v_household_id, p_vault_id, auth.uid(), 'add', p_amount, p_source, v_personal_txn_id, p_comment);
+
+  insert into household_activity (household_id, actor_user_id, kind, payload)
+    values (
+      v_household_id, auth.uid(), 'contribution',
+      jsonb_build_object('vault_id', p_vault_id, 'vault_name', v_vault_name, 'amount', p_amount, 'source', p_source)
+    );
+
+  return jsonb_build_object('ok', true, 'personal_txn_id', v_personal_txn_id);
+end;
+$$;
+
+-- Creates a goal's dedicated vault and the goal row together, atomically —
+-- avoids ever leaving an orphan vault with no goal wrapping it.
+create or replace function public.create_household_goal(
+  p_household_id uuid,
+  p_name text,
+  p_icon text,
+  p_target_amount numeric,
+  p_deadline date default null,
+  p_notes text default null
+)
+returns jsonb
+language plpgsql
+security invoker set search_path = public
+as $$
+declare
+  v_vault_id uuid;
+  v_goal_id uuid;
+begin
+  if not can_contribute_to_household(p_household_id) then
+    raise exception 'You do not have permission to create goals in this household';
+  end if;
+  if p_target_amount is null or p_target_amount <= 0 then
+    raise exception 'Target amount must be greater than zero';
+  end if;
+
+  insert into household_vaults (household_id, vault_type, name, created_by)
+    values (p_household_id, 'goal', p_name, auth.uid())
+    returning id into v_vault_id;
+
+  insert into household_goals (household_id, vault_id, created_by, name, icon, target_amount, deadline, notes)
+    values (p_household_id, v_vault_id, auth.uid(), p_name, coalesce(p_icon, '🎯'), p_target_amount, p_deadline, p_notes)
+    returning id into v_goal_id;
+
+  insert into household_activity (household_id, actor_user_id, kind, payload)
+    values (p_household_id, auth.uid(), 'goal_created', jsonb_build_object('goal_id', v_goal_id, 'name', p_name));
+
+  return jsonb_build_object('ok', true, 'goal_id', v_goal_id, 'vault_id', v_vault_id);
+end;
+$$;
+
+-- Redeeming an invite happens before the user is a household member, so this
+-- runs SECURITY DEFINER to look up the invite (bypassing the membership-gated
+-- household_invites RLS below) and insert the new membership row.
+create or replace function public.redeem_household_invite(p_token text)
+returns jsonb
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_invite record;
+begin
+  select * into v_invite from household_invites
+    where token = p_token and status = 'pending' and expires_at > now();
+
+  if v_invite is null then
+    raise exception 'This invite is invalid or has expired';
+  end if;
+  if exists (select 1 from household_members where household_id = v_invite.household_id and user_id = auth.uid()) then
+    raise exception 'You are already a member of this household';
+  end if;
+
+  insert into household_members (household_id, user_id, role)
+    values (v_invite.household_id, auth.uid(), v_invite.role);
+
+  update household_invites set status = 'accepted' where id = v_invite.id;
+
+  insert into household_activity (household_id, actor_user_id, kind, payload)
+    values (v_invite.household_id, auth.uid(), 'member_joined', '{}');
+
+  return jsonb_build_object('ok', true, 'household_id', v_invite.household_id);
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────
+-- Household RLS
+-- ─────────────────────────────────────────────────────────────
+alter table public.households enable row level security;
+alter table public.household_members enable row level security;
+alter table public.household_invites enable row level security;
+alter table public.household_vaults enable row level security;
+alter table public.household_goals enable row level security;
+alter table public.household_vault_transactions enable row level security;
+alter table public.household_activity enable row level security;
+
+drop policy if exists "households_select_member" on public.households;
+create policy "households_select_member" on public.households for select
+  using (is_household_member(id));
+drop policy if exists "households_insert_self_owner" on public.households;
+create policy "households_insert_self_owner" on public.households for insert
+  with check (owner_id = auth.uid());
+drop policy if exists "households_update_owner" on public.households;
+create policy "households_update_owner" on public.households for update
+  using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+drop policy if exists "households_delete_owner" on public.households;
+create policy "households_delete_owner" on public.households for delete
+  using (owner_id = auth.uid());
+
+drop policy if exists "household_members_select_member" on public.household_members;
+create policy "household_members_select_member" on public.household_members for select
+  using (is_household_member(household_id));
+drop policy if exists "household_members_insert_self" on public.household_members;
+create policy "household_members_insert_self" on public.household_members for insert
+  with check (user_id = auth.uid());
+drop policy if exists "household_members_update_owner" on public.household_members;
+create policy "household_members_update_owner" on public.household_members for update
+  using (is_household_owner(household_id)) with check (is_household_owner(household_id));
+drop policy if exists "household_members_delete_owner_or_self" on public.household_members;
+create policy "household_members_delete_owner_or_self" on public.household_members for delete
+  using (is_household_owner(household_id) or user_id = auth.uid());
+
+drop policy if exists "household_invites_select_member" on public.household_invites;
+create policy "household_invites_select_member" on public.household_invites for select
+  using (is_household_member(household_id));
+drop policy if exists "household_invites_insert_owner" on public.household_invites;
+create policy "household_invites_insert_owner" on public.household_invites for insert
+  with check (is_household_owner(household_id) and created_by = auth.uid());
+drop policy if exists "household_invites_update_owner" on public.household_invites;
+create policy "household_invites_update_owner" on public.household_invites for update
+  using (is_household_owner(household_id)) with check (is_household_owner(household_id));
+
+drop policy if exists "household_vaults_select_member" on public.household_vaults;
+create policy "household_vaults_select_member" on public.household_vaults for select
+  using (is_household_member(household_id));
+drop policy if exists "household_vaults_insert_goal" on public.household_vaults;
+create policy "household_vaults_insert_goal" on public.household_vaults for insert
+  with check (vault_type = 'goal' and can_contribute_to_household(household_id) and created_by = auth.uid());
+drop policy if exists "household_vaults_update_owner" on public.household_vaults;
+create policy "household_vaults_update_owner" on public.household_vaults for update
+  using (is_household_owner(household_id)) with check (is_household_owner(household_id));
+
+drop policy if exists "household_goals_select_member" on public.household_goals;
+create policy "household_goals_select_member" on public.household_goals for select
+  using (is_household_member(household_id));
+drop policy if exists "household_goals_insert_contributor" on public.household_goals;
+create policy "household_goals_insert_contributor" on public.household_goals for insert
+  with check (can_contribute_to_household(household_id) and created_by = auth.uid());
+drop policy if exists "household_goals_update_owner_or_creator" on public.household_goals;
+create policy "household_goals_update_owner_or_creator" on public.household_goals for update
+  using (is_household_owner(household_id) or created_by = auth.uid())
+  with check (is_household_owner(household_id) or created_by = auth.uid());
+drop policy if exists "household_goals_delete_owner" on public.household_goals;
+create policy "household_goals_delete_owner" on public.household_goals for delete
+  using (is_household_owner(household_id));
+
+drop policy if exists "household_vault_txns_select_member" on public.household_vault_transactions;
+create policy "household_vault_txns_select_member" on public.household_vault_transactions for select
+  using (is_household_member(household_id));
+drop policy if exists "household_vault_txns_insert_contributor" on public.household_vault_transactions;
+create policy "household_vault_txns_insert_contributor" on public.household_vault_transactions for insert
+  with check (can_contribute_to_household(household_id) and user_id = auth.uid());
+
+drop policy if exists "household_activity_select_member" on public.household_activity;
+create policy "household_activity_select_member" on public.household_activity for select
+  using (is_household_member(household_id));
+drop policy if exists "household_activity_insert_member" on public.household_activity;
+create policy "household_activity_insert_member" on public.household_activity for insert
+  with check (is_household_member(household_id) and actor_user_id = auth.uid());

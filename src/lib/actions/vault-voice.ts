@@ -202,6 +202,7 @@ function mergeWithPendingAction(action: VaultAction, pendingAction: VaultAction 
     newCategory: action.newCategory ?? pendingAction.newCategory,
     recurring: action.recurring ?? pendingAction.recurring,
     itemEntity: action.itemEntity ?? pendingAction.itemEntity,
+    goalName: action.goalName ?? pendingAction.goalName,
     confidence: action.confidence,
   };
 }

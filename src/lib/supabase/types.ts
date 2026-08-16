@@ -117,6 +117,110 @@ export type VaultRecurringPlan = {
   updated_at: string;
 };
 
+/**
+ * A member's role within one household — separate from any global app role.
+ * Enforced by RLS (is_household_member/is_household_owner/
+ * can_contribute_to_household in supabase/schema.sql), never trusted from
+ * the client alone.
+ */
+export type HouseholdRole = "owner" | "member" | "viewer" | "limited_member";
+
+/** private = owner only, selected = specific members, home = every member. */
+export type HouseholdVisibility = "private" | "selected" | "home";
+
+export type Household = {
+  id: string;
+  code: string;
+  name: string;
+  owner_id: string;
+  created_at: string;
+  settings: Record<string, unknown>;
+};
+
+export type HouseholdMember = {
+  id: string;
+  household_id: string;
+  user_id: string;
+  role: HouseholdRole;
+  joined_at: string;
+};
+
+export type HouseholdInviteStatus = "pending" | "accepted" | "revoked" | "expired";
+
+export type HouseholdInvite = {
+  id: string;
+  household_id: string;
+  token: string;
+  created_by: string;
+  role: Exclude<HouseholdRole, "owner">;
+  status: HouseholdInviteStatus;
+  expires_at: string;
+  created_at: string;
+};
+
+export type HouseholdVaultType = "shared" | "goal";
+
+/**
+ * A container for pooled money — the balance is never stored here, always
+ * derived live by summing household_vault_transactions for this vault_id
+ * (mirrors how vault_transactions/getVaultSummary already works for the
+ * unchanged personal vault).
+ */
+export type HouseholdVault = {
+  id: string;
+  household_id: string;
+  vault_type: HouseholdVaultType;
+  name: string;
+  visibility: HouseholdVisibility;
+  created_by: string;
+  created_at: string;
+};
+
+export type HouseholdGoalStatus = "active" | "completed" | "archived";
+
+export type HouseholdGoal = {
+  id: string;
+  household_id: string;
+  vault_id: string;
+  created_by: string;
+  name: string;
+  icon: string;
+  target_amount: number;
+  deadline: string | null;
+  status: HouseholdGoalStatus;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HouseholdVaultTransactionSource = "personal_vault" | "external";
+
+export type HouseholdVaultTransaction = {
+  id: string;
+  household_id: string;
+  vault_id: string;
+  user_id: string;
+  type: "add" | "deduct";
+  amount: number;
+  source: HouseholdVaultTransactionSource;
+  /** The personal-vault deduction row that funded this contribution, when source is "personal_vault". */
+  source_personal_txn_id: string | null;
+  comment: string | null;
+  visibility: HouseholdVisibility;
+  created_at: string;
+};
+
+export type HouseholdActivity = {
+  id: string;
+  household_id: string;
+  actor_user_id: string;
+  /** "contribution" | "goal_created" | "goal_completed" | "member_joined" — kept as a plain string since new kinds are additive and don't need a schema migration. */
+  kind: string;
+  payload: Record<string, unknown>;
+  visibility: HouseholdVisibility;
+  created_at: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -168,9 +272,93 @@ export type Database = {
         Update: Partial<VaultRecurringPlan>;
         Relationships: [];
       };
+      households: {
+        Row: Household;
+        Insert: Partial<Household> & { code: string; name: string; owner_id: string };
+        Update: Partial<Household>;
+        Relationships: [];
+      };
+      household_members: {
+        Row: HouseholdMember;
+        Insert: Partial<HouseholdMember> & { household_id: string; user_id: string; role: HouseholdRole };
+        Update: Partial<HouseholdMember>;
+        Relationships: [];
+      };
+      household_invites: {
+        Row: HouseholdInvite;
+        Insert: Partial<HouseholdInvite> & {
+          household_id: string;
+          token: string;
+          created_by: string;
+          role: Exclude<HouseholdRole, "owner">;
+        };
+        Update: Partial<HouseholdInvite>;
+        Relationships: [];
+      };
+      household_vaults: {
+        Row: HouseholdVault;
+        Insert: Partial<HouseholdVault> & {
+          household_id: string;
+          vault_type: HouseholdVaultType;
+          name: string;
+          created_by: string;
+        };
+        Update: Partial<HouseholdVault>;
+        Relationships: [];
+      };
+      household_goals: {
+        Row: HouseholdGoal;
+        Insert: Partial<HouseholdGoal> & {
+          household_id: string;
+          vault_id: string;
+          created_by: string;
+          name: string;
+          target_amount: number;
+        };
+        Update: Partial<HouseholdGoal>;
+        Relationships: [];
+      };
+      household_vault_transactions: {
+        Row: HouseholdVaultTransaction;
+        Insert: Partial<HouseholdVaultTransaction> & {
+          household_id: string;
+          vault_id: string;
+          user_id: string;
+          type: "add" | "deduct";
+          amount: number;
+        };
+        Update: Partial<HouseholdVaultTransaction>;
+        Relationships: [];
+      };
+      household_activity: {
+        Row: HouseholdActivity;
+        Insert: Partial<HouseholdActivity> & { household_id: string; actor_user_id: string; kind: string };
+        Update: Partial<HouseholdActivity>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      contribute_to_household_vault: {
+        Args: { p_vault_id: string; p_amount: number; p_source: HouseholdVaultTransactionSource; p_comment?: string | null };
+        Returns: { ok: boolean; personal_txn_id: string | null };
+      };
+      create_household_goal: {
+        Args: {
+          p_household_id: string;
+          p_name: string;
+          p_icon: string | null;
+          p_target_amount: number;
+          p_deadline?: string | null;
+          p_notes?: string | null;
+        };
+        Returns: { ok: boolean; goal_id: string; vault_id: string };
+      };
+      redeem_household_invite: {
+        Args: { p_token: string };
+        Returns: { ok: boolean; household_id: string };
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

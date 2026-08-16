@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Home as HomeIcon } from "lucide-react";
+import { Plus, Home as HomeIcon, Users } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { getDashboardData } from "@/lib/dashboard-data";
 import { getCompactIcon } from "@/lib/icon-map";
@@ -10,6 +10,12 @@ import { LocationPath } from "@/components/shared/location-path";
 import { relativeDay } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SeedDemoButton } from "@/components/shared/seed-demo-button";
+import { listMyHouseholds } from "@/lib/actions/household";
+import { getHouseholdSummary } from "@/lib/actions/household-dashboard";
+
+function inr(amount: number): string {
+  return `₹${Math.round(amount).toLocaleString("en-IN")}`;
+}
 
 const ICON_BADGE_GRADIENTS = [
   "from-[#fdf3c8] to-[#f4a8cf]",
@@ -41,6 +47,9 @@ export default async function DashboardPage() {
     .eq("id", user!.id)
     .maybeSingle();
   const data = await getDashboardData(supabase);
+  const memberships = await listMyHouseholds();
+  const primaryHousehold = memberships[0];
+  const householdSummary = primaryHousehold ? await getHouseholdSummary(primaryHousehold.household.id) : null;
 
   const name = profile?.name || user?.email?.split("@")[0] || "there";
   const subtext =
@@ -166,6 +175,34 @@ export default async function DashboardPage() {
                       );
                     })}
                   </ol>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="p-5">
+              <CardHeader className="flex-row items-baseline p-0">
+                <h3 className="text-[17px] font-semibold tracking-tight">Household</h3>
+                <Link href="/household" className="ml-auto text-xs font-medium">
+                  {primaryHousehold ? "View" : "Get started"}
+                </Link>
+              </CardHeader>
+              <CardContent className="mt-3 p-0">
+                {primaryHousehold && householdSummary ? (
+                  <Link href={`/household?id=${primaryHousehold.household.id}`} className="block">
+                    <p className="text-xs text-[#0b0b14]/55">{primaryHousehold.household.name} — Household Savings</p>
+                    <p className="mt-1 text-2xl font-semibold tracking-tight">{inr(householdSummary.totalSharedSavings)}</p>
+                    <p className="mt-1 text-[13px] text-[#0b0b14]/55">
+                      {householdSummary.goals.filter((g) => g.goal.status === "active").length} active goal
+                      {householdSummary.goals.filter((g) => g.goal.status === "active").length === 1 ? "" : "s"}
+                    </p>
+                  </Link>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                      <Users className="size-4" />
+                    </span>
+                    <p className="text-sm text-[#0b0b14]/55">Pool savings with the people you share a home with.</p>
+                  </div>
                 )}
               </CardContent>
             </Card>

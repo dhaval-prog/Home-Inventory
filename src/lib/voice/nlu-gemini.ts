@@ -45,6 +45,8 @@ export interface VaultNluContext {
    * what was just shown, not just the last money movement.
    */
   previousTurnSummary?: string | null;
+  /** Names of the current household's real goals (e.g. ["Family Vacation", "Emergency Fund"]), so "the vacation fund" can be recognized as naming one of them. Omit/empty when the caller has no active household context. */
+  householdGoalNames?: string[];
 }
 
 interface GeminiVaultAction {
@@ -65,6 +67,8 @@ interface GeminiVaultAction {
   recurring_enabled: boolean | null;
   /** A physical item named alongside this money question/action, e.g. "the TV" in "how much did I spend on the TV?". Resolved read-only against inventory downstream — never invents or edits an item. */
   item_entity: string | null;
+  /** For check_household_balance/contribute_household_goal — the goal name as spoken (e.g. "vacation fund"), matched against the "Known household goals" context line when present. Null for check_household_balance means the household's total, not one goal. */
+  goal_name: string | null;
   confidence: ConfidenceLevel;
 }
 
@@ -101,6 +105,8 @@ const VAULT_INTENT_ENUM: VaultIntent[] = [
   "set_recurring",
   "vault_insight",
   "help",
+  "check_household_balance",
+  "contribute_household_goal",
 ];
 
 const VAULT_ACTION_SCHEMA = {
@@ -122,6 +128,7 @@ const VAULT_ACTION_SCHEMA = {
     recurring_day_of_month: { type: ["number", "null"] },
     recurring_enabled: { type: ["boolean", "null"] },
     item_entity: { type: ["string", "null"] },
+    goal_name: { type: ["string", "null"] },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
   },
   required: [
@@ -141,6 +148,7 @@ const VAULT_ACTION_SCHEMA = {
     "recurring_day_of_month",
     "recurring_enabled",
     "item_entity",
+    "goal_name",
     "confidence",
   ],
 };
@@ -210,8 +218,12 @@ Vault intents (put in vault_actions[].intent) with examples straight from real u
 - "set_recurring": "add 5000 to my vault and remind me to add another 5000 next month" -> TWO actions: add_money (amount=5000) AND set_recurring (recurring_amount=5000, recurring_enabled=true, recurring_schedule_mode="date" only if a specific day was named, else "salary").
 - "vault_insight": open-ended analytical questions like "where did most of my money go?", "what's my biggest expense this month?", "did I spend more this month than last month?", "what category is eating up my savings?".
 - "help": "what can you do?", "help".
+- "check_household_balance": a question about the HOUSEHOLD's pooled/shared money, not the user's own personal vault — "how much have we saved?", "how much is in the vacation fund?" (goal_name="vacation fund"), "how much more do we need for the emergency fund?" (goal_name="emergency fund"), "what's in our shared vault?". Leave goal_name null when the question is about the household's total, not one goal.
+- "contribute_household_goal": the user commits to putting money toward a HOUSEHOLD goal — "I'll contribute 5000 to the vacation fund" (amount=5000, goal_name="vacation fund"), "I can add 2000 to the emergency fund", "let's put 3000 toward the new TV". This is distinct from add_money (which only ever means the user's own personal vault) — if a goal/fund is named, or the phrasing is clearly about "we"/"our"/"the household", use contribute_household_goal instead of add_money.
 
 Combined vault+inventory queries (item_entity): when a vault question names a physical item rather than (or alongside) a category, e.g. "how much did I spend on the TV?" or "what did I spend on my new Sony TV last month?", keep intent as check_spending (category likely null unless also stated) and set item_entity to the item phrase ("TV"/"Sony TV") — this is resolved read-only against inventory downstream, never used to create or edit an item.
+
+Household goal names (goal_name): when a "Known household goals" context line is present, match the user's phrase against those exact names when it's a clear reference (e.g. "the vacation fund" -> "Family Vacation") and return the REAL goal name, not the user's paraphrase — resolution against the actual database row still happens downstream, so when genuinely ambiguous just return the phrase as heard.
 
 Same-utterance self-correction (e.g. "Deduct 500 for food — actually make that 700", "Add 2000, sorry I meant 3000", "Deduct 800 for groceries... no, that's shopping"): resolve to ONE action with the user's FINAL intended amount/category — do not emit two actions and do not use edit_transaction/undo_transaction for these, since nothing was recorded yet.
 
@@ -231,7 +243,7 @@ Money amounts: parse natural expressions like "₹500", "500 rupees", "five hund
 
 Confidence: "high" when the request is unambiguous (clear amount + clear intent). "medium" when you understood the intent but something is a guess (e.g. inferred category from a vague clue). "low" when a required field (usually the amount) is missing or the whole utterance is vague — the app will ask the user to clarify rather than execute.
 
-Context you may receive before the final user utterance: a line like "(context: ...)" describing the most recent transaction in this session — use it to resolve corrections ("actually make that 4000") and bare "undo that" references. A second, similar line may describe the previous turn's *result* in plain English regardless of domain (e.g. "Showed grocery spending: ₹3,200 this month." or "Found the camera in Bedroom → Wardrobe.") — use it to resolve short follow-ups that only make sense against what was just shown: "what about last month?" (re-run the same query with a new date_phrase/no other change), "what else is there?" (location_search/category_search again, same room/category), "show me another one" (search again, excluding what was just shown is not possible but re-run the same query). A message attributed to you (the model) is a clarifying question you just asked (e.g. "What was it for?") — interpret the user's final utterance as a direct, complete answer to that question (e.g. the user just says "groceries" — treat it as the category for the pending deduction, not as a new/unclear command).
+Context you may receive before the final user utterance: a line like "(context: known household goals: ...)" listing the current household's real goal names — use it only to resolve goal_name references (see above); if absent, the user has no active household and check_household_balance/contribute_household_goal should not be guessed from an ambiguous utterance. A separate line like "(context: ...)" describes the most recent transaction in this session — use it to resolve corrections ("actually make that 4000") and bare "undo that" references. A second, similar line may describe the previous turn's *result* in plain English regardless of domain (e.g. "Showed grocery spending: ₹3,200 this month." or "Found the camera in Bedroom → Wardrobe.") — use it to resolve short follow-ups that only make sense against what was just shown: "what about last month?" (re-run the same query with a new date_phrase/no other change), "what else is there?" (location_search/category_search again, same room/category), "show me another one" (search again, excluding what was just shown is not possible but re-run the same query). A message attributed to you (the model) is a clarifying question you just asked (e.g. "What was it for?") — interpret the user's final utterance as a direct, complete answer to that question (e.g. the user just says "groceries" — treat it as the category for the pending deduction, not as a new/unclear command).
 
 Respond with strict JSON matching the schema.`;
 
@@ -274,6 +286,7 @@ function toVaultAction(a: GeminiVaultAction): VaultAction {
           }
         : null,
     itemEntity: a.item_entity?.trim() || null,
+    goalName: a.goal_name?.trim() || null,
     confidence: a.confidence,
   };
 }
@@ -325,6 +338,9 @@ export async function parseWithGemini(transcript: string, context?: VaultNluCont
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   const contents: { role: string; parts: { text: string }[] }[] = [];
+  if (context?.householdGoalNames && context.householdGoalNames.length > 0) {
+    contents.push({ role: "user", parts: [{ text: `(context: known household goals: ${context.householdGoalNames.join(", ")})` }] });
+  }
   if (context?.lastTransactionSummary) {
     contents.push({ role: "user", parts: [{ text: `(context: ${context.lastTransactionSummary})` }] });
   }
