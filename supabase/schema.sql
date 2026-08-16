@@ -603,9 +603,14 @@ alter table public.household_goals enable row level security;
 alter table public.household_vault_transactions enable row level security;
 alter table public.household_activity enable row level security;
 
+-- owner_id = auth.uid() is included directly (not just is_household_member)
+-- because INSERT ... RETURNING re-checks the SELECT policy against the new
+-- row, and the AFTER INSERT trigger's own household_members row isn't
+-- guaranteed visible to that check yet — the owner must always be able to
+-- see a household they just created.
 drop policy if exists "households_select_member" on public.households;
 create policy "households_select_member" on public.households for select
-  using (is_household_member(id));
+  using (is_household_member(id) or owner_id = auth.uid());
 drop policy if exists "households_insert_self_owner" on public.households;
 create policy "households_insert_self_owner" on public.households for insert
   with check (owner_id = auth.uid());
