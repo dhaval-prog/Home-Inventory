@@ -232,6 +232,15 @@ export type HouseholdChatMessage = {
   /** Rendering hint only — e.g. { type: "suggest_goal", name, target_amount } — never used to auto-mutate anything by itself. */
   metadata: Record<string, unknown>;
   created_at: string;
+  /** Set when the sender edits the message; null if never edited. */
+  edited_at: string | null;
+};
+
+/** A read receipt: user_id has seen message_id as of seen_at. */
+export type HouseholdChatMessageRead = {
+  message_id: string;
+  user_id: string;
+  seen_at: string;
 };
 
 export type Database = {
@@ -355,6 +364,12 @@ export type Database = {
         Update: Partial<HouseholdChatMessage>;
         Relationships: [];
       };
+      household_chat_message_reads: {
+        Row: HouseholdChatMessageRead;
+        Insert: Partial<HouseholdChatMessageRead> & { message_id: string; user_id: string };
+        Update: Partial<HouseholdChatMessageRead>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -376,6 +391,10 @@ export type Database = {
       redeem_household_invite: {
         Args: { p_token: string };
         Returns: { ok: boolean; household_id: string };
+      };
+      mark_household_chat_seen: {
+        Args: { p_household_id: string };
+        Returns: void;
       };
     };
     Enums: Record<string, never>;

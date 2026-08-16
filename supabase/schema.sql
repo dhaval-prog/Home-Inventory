@@ -711,3 +711,74 @@ create policy "household_chat_select_member" on public.household_chat_messages f
 drop policy if exists "household_chat_insert_member" on public.household_chat_messages;
 create policy "household_chat_insert_member" on public.household_chat_messages for insert
   with check (is_household_member(household_id) and user_id = auth.uid());
+
+-- Sent/edited timestamps + per-member read receipts, so a message can show
+-- "sent at" / "seen at", and the sender can edit or delete their own message
+-- ONLY until another member has actually seen it — once seen, the option
+-- disappears (enforced here in RLS, not just hidden in the UI).
+alter table public.household_chat_messages add column if not exists edited_at timestamptz;
+
+create table if not exists public.household_chat_message_reads (
+  message_id uuid not null references public.household_chat_messages (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  seen_at timestamptz not null default now(),
+  primary key (message_id, user_id)
+);
+create index if not exists household_chat_message_reads_message_idx
+  on public.household_chat_message_reads (message_id);
+
+alter table public.household_chat_message_reads enable row level security;
+
+drop policy if exists "household_chat_message_reads_select_member" on public.household_chat_message_reads;
+create policy "household_chat_message_reads_select_member" on public.household_chat_message_reads for select
+  using (exists (
+    select 1 from household_chat_messages m
+    where m.id = message_id and is_household_member(m.household_id)
+  ));
+drop policy if exists "household_chat_message_reads_insert_own" on public.household_chat_message_reads;
+create policy "household_chat_message_reads_insert_own" on public.household_chat_message_reads for insert
+  with check (
+    user_id = auth.uid()
+    and exists (
+      select 1 from household_chat_messages m
+      where m.id = message_id and is_household_member(m.household_id)
+    )
+  );
+
+-- True once at least one OTHER household member has a read receipt for this message.
+create or replace function public.chat_message_seen_by_others(p_message_id uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1
+    from household_chat_message_reads r
+    join household_chat_messages m on m.id = r.message_id
+    where r.message_id = p_message_id and r.user_id != m.user_id
+  )
+$$;
+
+-- Marks every message in the household not authored by the caller as seen by
+-- them (idempotent — already-seen messages keep their original seen_at).
+create or replace function public.mark_household_chat_seen(p_household_id uuid)
+returns void language plpgsql security invoker as $$
+begin
+  if not is_household_member(p_household_id) then
+    raise exception 'not a household member';
+  end if;
+
+  insert into household_chat_message_reads (message_id, user_id, seen_at)
+  select m.id, auth.uid(), now()
+  from household_chat_messages m
+  where m.household_id = p_household_id
+    and m.user_id != auth.uid()
+  on conflict (message_id, user_id) do nothing;
+end;
+$$;
+
+drop policy if exists "household_chat_update_own_unseen" on public.household_chat_messages;
+create policy "household_chat_update_own_unseen" on public.household_chat_messages for update
+  using (user_id = auth.uid() and kind = 'user' and not chat_message_seen_by_others(id))
+  with check (user_id = auth.uid());
+
+drop policy if exists "household_chat_delete_own_unseen" on public.household_chat_messages;
+create policy "household_chat_delete_own_unseen" on public.household_chat_messages for delete
+  using (user_id = auth.uid() and kind = 'user' and not chat_message_seen_by_others(id));

@@ -2,18 +2,29 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Send } from "lucide-react";
+import { Sparkles, Send, Pencil, Trash2, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { initials } from "@/lib/utils";
-import { sendHouseholdMessage, listHouseholdMessages, type HouseholdChatMessageWithSender } from "@/lib/actions/household-chat";
+import {
+  sendHouseholdMessage,
+  listHouseholdMessages,
+  markHouseholdChatSeen,
+  editHouseholdMessage,
+  deleteHouseholdMessage,
+  type HouseholdChatMessageWithSender,
+} from "@/lib/actions/household-chat";
 import { createGoal } from "@/lib/actions/household-goals";
 
 const POLL_MS = 4000;
 
 function inr(amount: number): string {
   return `₹${Math.round(amount).toLocaleString("en-IN")}`;
+}
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" });
 }
 
 function GoalSuggestionChip({ householdId, name, targetAmount }: { householdId: string; name: string; targetAmount: number }) {
@@ -60,11 +71,18 @@ function ChatBubble({
   message,
   isMine,
   householdId,
+  onChanged,
 }: {
   message: HouseholdChatMessageWithSender;
   isMine: boolean;
   householdId: string;
+  onChanged: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.message);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
   if (message.kind === "system") {
     return (
       <div className="flex justify-center">
@@ -76,8 +94,48 @@ function ChatBubble({
   const suggestion =
     message.metadata?.type === "suggest_goal" ? (message.metadata as { name: string; target_amount: number }) : null;
 
+  if (editing) {
+    return (
+      <div className={`flex gap-2 ${isMine ? "flex-row-reverse" : ""}`}>
+        <div className="flex max-w-[75%] flex-1 flex-col items-end gap-1.5">
+          <Input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setEditing(false);
+            }}
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <div className="flex gap-1.5">
+            <Button size="icon-sm" variant="ghost" onClick={() => setEditing(false)}>
+              <X className="size-3.5" />
+            </Button>
+            <Button
+              size="icon-sm"
+              disabled={pending || !draft.trim()}
+              onClick={() =>
+                startTransition(async () => {
+                  const result = await editHouseholdMessage(message.id, draft);
+                  if ("error" in result) {
+                    setError(result.error);
+                    return;
+                  }
+                  setEditing(false);
+                  onChanged();
+                })
+              }
+            >
+              <Check className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={`flex gap-2 ${isMine ? "flex-row-reverse" : ""}`}>
+    <div className={`group flex gap-2 ${isMine ? "flex-row-reverse" : ""}`}>
       {!isMine && (
         <Avatar size="sm" className="mt-0.5 shrink-0">
           <AvatarFallback>{initials(message.senderName)}</AvatarFallback>
@@ -85,12 +143,38 @@ function ChatBubble({
       )}
       <div className={`max-w-[75%] ${isMine ? "items-end" : "items-start"} flex flex-col`}>
         {!isMine && <p className="mb-0.5 text-xs text-muted-foreground">{message.senderName}</p>}
-        <div className={`rounded-2xl px-3.5 py-2 text-sm ${isMine ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
-          {message.message}
+        <div className="flex items-center gap-1.5">
+          {isMine && message.editable && (
+            <div className="flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+              <Button size="icon-sm" variant="ghost" className="size-6" onClick={() => setEditing(true)}>
+                <Pencil className="size-3" />
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="size-6"
+                disabled={pending}
+                onClick={() =>
+                  startTransition(async () => {
+                    const result = await deleteHouseholdMessage(message.id);
+                    if (!("error" in result)) onChanged();
+                  })
+                }
+              >
+                <Trash2 className="size-3" />
+              </Button>
+            </div>
+          )}
+          <div className={`rounded-2xl px-3.5 py-2 text-sm ${isMine ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+            {message.message}
+          </div>
         </div>
-        {suggestion && (
-          <GoalSuggestionChip householdId={householdId} name={suggestion.name} targetAmount={suggestion.target_amount} />
-        )}
+        <p className="mt-0.5 text-[11px] text-muted-foreground">
+          {formatTime(message.created_at)}
+          {message.edited_at && " · edited"}
+          {isMine && message.seenByOthers && message.seenAt && ` · Seen ${formatTime(message.seenAt)}`}
+        </p>
+        {suggestion && <GoalSuggestionChip householdId={householdId} name={suggestion.name} targetAmount={suggestion.target_amount} />}
       </div>
     </div>
   );
@@ -111,12 +195,18 @@ export function ChatPanel({
   const [pending, startTransition] = useTransition();
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  async function refresh() {
+    await markHouseholdChatSeen(householdId);
+    const fresh = await listHouseholdMessages(householdId);
+    setMessages(fresh);
+  }
+
   useEffect(() => {
-    const interval = setInterval(async () => {
-      const fresh = await listHouseholdMessages(householdId);
-      setMessages(fresh);
-    }, POLL_MS);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    refresh();
+    const interval = setInterval(refresh, POLL_MS);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [householdId]);
 
   useEffect(() => {
@@ -136,8 +226,7 @@ export function ChatPanel({
         setError(result.error);
         return;
       }
-      const fresh = await listHouseholdMessages(householdId);
-      setMessages(fresh);
+      await refresh();
     });
   }
 
@@ -150,7 +239,7 @@ export function ChatPanel({
           </p>
         ) : (
           messages.map((m) => (
-            <ChatBubble key={m.id} message={m} isMine={m.user_id === currentUserId} householdId={householdId} />
+            <ChatBubble key={m.id} message={m} isMine={m.user_id === currentUserId} householdId={householdId} onChanged={refresh} />
           ))
         )}
         <div ref={bottomRef} />

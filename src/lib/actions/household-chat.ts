@@ -7,7 +7,7 @@ import { parseMoneyExpression } from "@/lib/vault/money-parser";
 import { listGoals } from "@/lib/actions/household-goals";
 import { processHouseholdVoiceCommand } from "@/lib/actions/household-voice";
 import type { VaultVoiceResult } from "@/lib/actions/vault-voice";
-import type { HouseholdChatMessage, HouseholdChatMessageKind } from "@/lib/supabase/types";
+import type { HouseholdChatMessage, HouseholdChatMessageKind, HouseholdChatMessageRead } from "@/lib/supabase/types";
 
 /**
  * Home Chat — context-aware, not a generic message log. A message that
@@ -23,6 +23,12 @@ import type { HouseholdChatMessage, HouseholdChatMessageKind } from "@/lib/supab
 
 export interface HouseholdChatMessageWithSender extends HouseholdChatMessage {
   senderName: string;
+  /** True once at least one other household member has seen this message. */
+  seenByOthers: boolean;
+  /** First time another member saw this message, if seenByOthers. */
+  seenAt: string | null;
+  /** True only for the sender's own, not-yet-seen 'user' messages — the RLS update/delete policies enforce the same rule server-side. */
+  editable: boolean;
 }
 
 const GOAL_KEYWORD_RE = /\b(save|saving|savings|goal|fund)\b/i;
@@ -121,6 +127,10 @@ export async function sendHouseholdMessage(householdId: string, text: string): P
 
 export async function listHouseholdMessages(householdId: string, limit = 50): Promise<HouseholdChatMessageWithSender[]> {
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   const { data: rows } = await supabase
     .from("household_chat_messages")
     .select("*")
@@ -129,12 +139,72 @@ export async function listHouseholdMessages(householdId: string, limit = 50): Pr
     .limit(limit);
   if (!rows || rows.length === 0) return [];
 
-  const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
-  const { data: profiles } = await supabase.from("profiles").select("*").in("id", userIds);
+  const [{ data: profiles }, { data: reads }] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("*")
+      .in("id", Array.from(new Set(rows.map((r) => r.user_id)))),
+    supabase
+      .from("household_chat_message_reads")
+      .select("*")
+      .in(
+        "message_id",
+        rows.map((r) => r.id)
+      ),
+  ]);
   const nameById = new Map((profiles ?? []).map((p) => [p.id, p.name || "Member"]));
 
-  return rows.map((r) => ({
-    ...r,
-    senderName: r.kind === ("system" satisfies HouseholdChatMessageKind) ? "Vault Assistant" : (nameById.get(r.user_id) ?? "Member"),
-  }));
+  const readsByMessage = new Map<string, HouseholdChatMessageRead[]>();
+  for (const r of reads ?? []) {
+    const existing = readsByMessage.get(r.message_id) ?? [];
+    existing.push(r);
+    readsByMessage.set(r.message_id, existing);
+  }
+
+  return rows.map((r) => {
+    const otherReads = (readsByMessage.get(r.id) ?? []).filter((read) => read.user_id !== r.user_id);
+    const seenByOthers = otherReads.length > 0;
+    const seenAt = seenByOthers ? otherReads.reduce((min, read) => (read.seen_at < min ? read.seen_at : min), otherReads[0].seen_at) : null;
+    return {
+      ...r,
+      senderName: r.kind === ("system" satisfies HouseholdChatMessageKind) ? "Vault Assistant" : (nameById.get(r.user_id) ?? "Member"),
+      seenByOthers,
+      seenAt,
+      editable: r.kind === "user" && r.user_id === user?.id && !seenByOthers,
+    };
+  });
+}
+
+/** Marks every message in the household not authored by the caller as seen — called from the Chat tab's mount/poll cycle, never from a background page load, so opening the household page without viewing Chat doesn't mark anything read. */
+export async function markHouseholdChatSeen(householdId: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase.rpc("mark_household_chat_seen", { p_household_id: householdId });
+}
+
+export async function editHouseholdMessage(messageId: string, newText: string): Promise<{ ok: true } | { error: string }> {
+  const trimmed = newText.trim();
+  if (!trimmed) return { error: "Message can't be empty" };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("household_chat_messages")
+    .update({ message: trimmed, edited_at: new Date().toISOString() })
+    .eq("id", messageId)
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: error.message };
+  if (!data) return { error: "This message can no longer be edited — someone has already seen it." };
+
+  revalidatePath("/household");
+  return { ok: true };
+}
+
+export async function deleteHouseholdMessage(messageId: string): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.from("household_chat_messages").delete().eq("id", messageId).select("id").maybeSingle();
+  if (error) return { error: error.message };
+  if (!data) return { error: "This message can no longer be deleted — someone has already seen it." };
+
+  revalidatePath("/household");
+  return { ok: true };
 }
