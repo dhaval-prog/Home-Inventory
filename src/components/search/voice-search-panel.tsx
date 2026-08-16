@@ -11,7 +11,6 @@ import { VoiceMicButton } from "@/components/search/voice-mic-button";
 import { VoiceResultCard } from "@/components/search/voice-result-card";
 import { VoiceSlotFollowUp } from "@/components/search/voice-slot-followup";
 import { useSpeechRecognition, type VoiceErrorKind } from "@/hooks/use-speech-recognition";
-import { searchSuggestions } from "@/lib/actions/search";
 import { listHomes } from "@/lib/actions/browse";
 import { createItemFromVoice } from "@/lib/actions/items";
 import {
@@ -25,15 +24,18 @@ import {
   type VaultVoiceResult,
   type VoiceProcessResult,
 } from "@/lib/actions/voice";
+import { ITEM_CATEGORIES } from "@/lib/constants";
 import type { LocationNode } from "@/lib/location";
 import type { Item } from "@/lib/supabase/types";
+import { CATEGORY_KEYWORDS } from "@/lib/voice/synonyms";
 import type { VaultIntent } from "@/lib/voice/types";
 
 type Phase =
   | { kind: "idle" }
   | { kind: "processing" }
   | { kind: "search-results"; query: string; results: { item: Item; path: LocationNode[] }[] }
-  | { kind: "no-results"; query: string }
+  | { kind: "no-results"; query: string; suggestedCategory: { value: string; label: string } | null }
+  | { kind: "inventory-location"; roomName: string | null; furnitureName: string | null; results: { item: Item; path: LocationNode[] }[] }
   | { kind: "disambiguate"; transcript: string }
   | { kind: "add-flow"; itemName: string | null; location: ResolvedLocation; missingFields: MissingField[] }
   | { kind: "add-confirm"; itemName: string; location: ResolvedLocation }
@@ -50,7 +52,35 @@ type Phase =
 // even though that iframe has no direct access to this React state.
 const vaultChannel = typeof window !== "undefined" && "BroadcastChannel" in window ? new BroadcastChannel("vault-sync") : null;
 
-const EMPTY_VAULT_SESSION: VaultSessionContext = { lastTransaction: null, pending: null };
+const EMPTY_VAULT_SESSION: VaultSessionContext = { lastTransaction: null, pending: null, previousTurnSummary: null };
+
+const QUICK_PICKS: { label: string; run: string }[] = [
+  { label: "Recently added", run: "show me recently added items" },
+  { label: "Vault balance", run: "how much do I have" },
+  { label: "This month's spending", run: "how much did I spend this month" },
+  { label: "My electronics", run: "show me my electronics" },
+];
+
+const EXAMPLE_PROMPTS = [
+  'Try "where is my passport"',
+  'Try "what\'s in my bedroom wardrobe"',
+  'Try "I spent 500 on groceries"',
+  'Try "how much do I have in my vault"',
+  'Try "show me my electronics"',
+];
+
+/** Cheap client-side category guess for a no-results query — offers "Search {category}" as an alternative rather than a dead end. Real semantic matching happens server-side via Gemini; this is just a fallback nudge. */
+function suggestCategoryFor(query: string): { value: string; label: string } | null {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  for (const [value, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+    if (keywords.some((k) => words.some((w) => w.includes(k) || k.includes(w)))) {
+      const known = ITEM_CATEGORIES.find((c) => c.value === value);
+      if (known) return { value: known.value, label: known.label };
+    }
+  }
+  return null;
+}
 
 const ERROR_MESSAGES: Record<VoiceErrorKind, string> = {
   "permission-denied": "Microphone access is required to use voice search.",
@@ -103,7 +133,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
   const speech = useSpeechRecognition();
 
   const [query, setQuery] = useState("");
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [promptIndex, setPromptIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [homeId, setHomeId] = useState<string | undefined>(undefined);
   const [vaultSession, setVaultSession] = useState<VaultSessionContext>(EMPTY_VAULT_SESSION);
@@ -131,23 +161,30 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
     setPhase({ kind: "error", message: ERROR_MESSAGES[speech.error], allowRetry: speech.error !== "no-mic" });
   }, [speech.error]);
 
-  // Typed-search suggestions — identical debounced behavior to the original
-  // header search, untouched by the voice/NLU pipeline.
+  // Typed queries run through the same NLU pipeline as voice: a short
+  // typing-pause debounce (only once the panel is idle and the query is
+  // non-trivial) triggers runCommand, exactly like Enter or a spoken
+  // transcript would.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!query.trim() || phase.kind !== "idle") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setSuggestions([]);
-      return;
-    }
+    if (phase.kind !== "idle" || query.trim().length < 3) return;
     debounceRef.current = setTimeout(() => {
-      searchSuggestions(query).then(setSuggestions);
-    }, 200);
+      runCommand(query.trim());
+    }, 800);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
+
+  // A short rotating list of example prompts while the panel sits idle and
+  // empty — gives new users a feel for what they can ask without a dead
+  // "type to search" placeholder being the only guidance.
+  useEffect(() => {
+    if (!open || phase.kind !== "idle" || query.trim()) return;
+    const timer = setInterval(() => setPromptIndex((i) => (i + 1) % EXAMPLE_PROMPTS.length), 3000);
+    return () => clearInterval(timer);
+  }, [open, phase.kind, query]);
 
   function goToSearchPage(term: string) {
     onOpenChange(false);
@@ -167,6 +204,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
             }
           : null,
         pending: null,
+        previousTurnSummary: result.message,
       });
       setPhase({ kind: "vault-result", intent: result.intent, message: result.message, amount: result.amount });
       const isDeduct = result.intent === "deduct_money" || result.intent === "delete_transaction" || result.intent === "undo_transaction";
@@ -175,12 +213,12 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
       return;
     }
     if (result.kind === "vault-answer") {
-      setVaultSession((s) => ({ ...s, pending: null }));
+      setVaultSession((s) => ({ ...s, pending: null, previousTurnSummary: result.message }));
       setPhase({ kind: "vault-result", intent: result.intent, message: result.message, amount: result.amount, detail: result.detail });
       return;
     }
     if (result.kind === "vault-history") {
-      setVaultSession((s) => ({ ...s, pending: null }));
+      setVaultSession((s) => ({ ...s, pending: null, previousTurnSummary: result.message }));
       setPhase({ kind: "vault-history", message: result.message, transactions: result.transactions });
       return;
     }
@@ -210,11 +248,15 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
 
   function applyResult(result: VoiceProcessResult) {
     if (result.kind === "search") {
+      setVaultSession((s) => ({ ...s, previousTurnSummary: result.summary }));
       setPhase(
         result.results.length > 0
           ? { kind: "search-results", query: result.query, results: result.results }
-          : { kind: "no-results", query: result.query }
+          : { kind: "no-results", query: result.query, suggestedCategory: suggestCategoryFor(result.query) }
       );
+    } else if (result.kind === "inventory-location") {
+      setVaultSession((s) => ({ ...s, previousTurnSummary: result.summary }));
+      setPhase({ kind: "inventory-location", roomName: result.roomName, furnitureName: result.furnitureName, results: result.results });
     } else if (result.kind === "add") {
       const missing = recomputeMissing(result.itemName, result.location);
       setPhase(
@@ -242,6 +284,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
   }, [phase, onOpenChange]);
 
   async function runCommand(transcript: string) {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     setPhase({ kind: "processing" });
     try {
       const result = await processVoiceCommand(transcript, { roomId: extractRoomId(pathname), vaultSession });
@@ -375,7 +418,7 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
                   setPhase({ kind: "idle" });
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && query.trim()) goToSearchPage(query.trim());
+                  if (e.key === "Enter" && query.trim()) runCommand(query.trim());
                 }}
                 placeholder="Search your home…"
                 className="pl-9 pr-8"
@@ -404,28 +447,36 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
 
         <div className="flex-1 overflow-y-auto p-3">
           {phase.kind === "idle" && (
-            <>
-              {suggestions.length > 0 ? (
-                <div className="space-y-0.5">
-                  {suggestions.map((s) => (
+            <div className="space-y-4">
+              <p className="px-1 pt-2 text-center text-sm text-muted-foreground">
+                {query.trim()
+                  ? "Keep typing, press Enter, or tap the mic…"
+                  : speech.isSupported
+                    ? EXAMPLE_PROMPTS[promptIndex]
+                    : "Type to search. Voice search isn't available in this browser."}
+              </p>
+              {!query.trim() && (
+                <div className="flex flex-wrap justify-center gap-2">
+                  {QUICK_PICKS.map((qp) => (
                     <button
-                      key={s}
-                      onClick={() => goToSearchPage(s)}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"
+                      key={qp.label}
+                      onClick={() => runCommand(qp.run)}
+                      className="rounded-full border bg-card px-3 py-1.5 text-xs font-medium hover:bg-muted"
                     >
-                      <Search className="size-3.5 text-muted-foreground" />
-                      {s}
+                      {qp.label}
                     </button>
                   ))}
                 </div>
-              ) : (
-                <p className="px-1 py-6 text-center text-sm text-muted-foreground">
-                  {speech.isSupported
-                    ? 'Type to search, or tap the mic — try "I spent 500 on groceries" or "how much do I have?"'
-                    : "Type to search. Voice search isn't available in this browser."}
-                </p>
               )}
-            </>
+              <div className="text-center">
+                <button
+                  onClick={() => goToSearchPage(query.trim())}
+                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                >
+                  Browse all in Search →
+                </button>
+              </div>
+            </div>
           )}
 
           {phase.kind === "processing" && (
@@ -454,6 +505,14 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
                 We couldn&apos;t find <span className="font-medium">&ldquo;{phase.query}&rdquo;</span>.
               </p>
               <div className="flex flex-wrap justify-center gap-2">
+                {phase.suggestedCategory && (
+                  <Button size="sm" onClick={() => runCommand(`show me my ${phase.suggestedCategory!.label.toLowerCase()}`)}>
+                    Search {phase.suggestedCategory.label}
+                  </Button>
+                )}
+                <Button size="sm" variant="outline" onClick={() => runCommand("show me recently added items")}>
+                  Recently added
+                </Button>
                 {speech.isSupported && (
                   <Button size="sm" variant="outline" onClick={startMainRecording}>
                     🎙️ Try again
@@ -462,6 +521,21 @@ export function VoiceSearchPanel({ open, onOpenChange }: { open: boolean; onOpen
                 <Button size="sm" variant="outline" onClick={() => goToSearchPage(phase.query)}>
                   Search manually
                 </Button>
+              </div>
+            </div>
+          )}
+
+          {phase.kind === "inventory-location" && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                {[phase.roomName, phase.furnitureName].filter(Boolean).join(" → ") || "That location"} — {phase.results.length} item
+                {phase.results.length === 1 ? "" : "s"}
+              </p>
+              <div className="space-y-2">
+                {phase.results.map(({ item, path }) => (
+                  <VoiceResultCard key={item.id} item={item} path={path} onNavigate={() => onOpenChange(false)} />
+                ))}
+                {phase.results.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">Nothing found there yet.</p>}
               </div>
             </div>
           )}

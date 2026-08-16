@@ -3,9 +3,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { parseTranscript } from "@/lib/voice/nlu";
 import type { VaultNluContext } from "@/lib/voice/nlu-gemini";
+import { fuzzyMatchByName } from "@/lib/voice/synonyms";
 import { matchCategory } from "@/lib/vault/categories";
 import { parseMoneyExpression } from "@/lib/vault/money-parser";
-import { parseDateRange } from "@/lib/vault/date-range";
+import { parseDateRange, type DateRange } from "@/lib/vault/date-range";
 import {
   computeSpendingInsights,
   deleteVaultTransaction,
@@ -48,6 +49,14 @@ export interface VaultPendingState {
 export interface VaultSessionContext {
   lastTransaction: VaultSessionTransactionSummary | null;
   pending: VaultPendingState | null;
+  /**
+   * Plain-English description of whatever the previous turn showed —
+   * inventory or vault alike, e.g. "Showed grocery spending: ₹3,200 this
+   * month." — generalizes lastTransaction to read-only results so a bare
+   * follow-up like "what about last month?" resolves against it. Set by the
+   * client from the previous VoiceProcessResult; never persisted server-side.
+   */
+  previousTurnSummary?: string | null;
 }
 
 export interface VaultVoiceExecuted {
@@ -142,11 +151,13 @@ function summarizeSessionTxn(t: VaultSessionTransactionSummary): string {
 
 function buildGeminiContext(pending: VaultPendingState | null, session: VaultSessionContext | null): VaultNluContext | undefined {
   const lastTransactionSummary = session?.lastTransaction ? summarizeSessionTxn(session.lastTransaction) : null;
-  if (!pending && !lastTransactionSummary) return undefined;
+  const previousTurnSummary = session?.previousTurnSummary ?? null;
+  if (!pending && !lastTransactionSummary && !previousTurnSummary) return undefined;
   return {
     pendingQuestion:
       pending?.kind === "clarify-amount" ? "How much was it?" : pending?.kind === "clarify-category" ? "What was it for?" : null,
     lastTransactionSummary,
+    previousTurnSummary,
   };
 }
 
@@ -190,6 +201,7 @@ function mergeWithPendingAction(action: VaultAction, pendingAction: VaultAction 
     newAmount: action.newAmount ?? pendingAction.newAmount,
     newCategory: action.newCategory ?? pendingAction.newCategory,
     recurring: action.recurring ?? pendingAction.recurring,
+    itemEntity: action.itemEntity ?? pendingAction.itemEntity,
     confidence: action.confidence,
   };
 }
@@ -312,12 +324,58 @@ async function handleCheckTotalSaved(
   };
 }
 
+/**
+ * Combined vault+inventory query — "how much did I spend on the TV?" names a
+ * physical item rather than (or alongside) a vault category. Resolves the
+ * item read-only against inventory (never creates/edits it — see AGENTS
+ * section 16) and sums deductions linked to it either via the persisted
+ * related_item_id (see linkTransactionToInventoryItem) or a plain text match
+ * against the transaction's comment/category, for transactions recorded
+ * before the item existed or without a confident link.
+ */
+async function handleCheckSpendingForItem(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  itemEntity: string,
+  range: DateRange | undefined
+): Promise<VaultVoiceResult> {
+  const { data: items } = await supabase.from("items").select("id, name").eq("user_id", userId);
+  const matchedItem = items && items.length ? fuzzyMatchByName(itemEntity, items) : null;
+
+  const rows = await findVaultTransactions(supabase, userId, { type: "deduct", range, limit: 500 });
+  const needle = itemEntity.toLowerCase();
+  const matches = rows.filter((t) => {
+    if (matchedItem && t.related_item_id === matchedItem.id) return true;
+    const haystack = `${t.comment ?? ""} ${t.category ?? ""}`.toLowerCase();
+    return haystack.includes(needle);
+  });
+
+  const itemLabel = matchedItem?.name ?? itemEntity;
+  const dateLabel = range ? ` ${range.label}` : "";
+  if (matches.length === 0) {
+    return { kind: "vault-answer", intent: "check_spending", message: `I couldn't find any spending linked to "${itemLabel}"${dateLabel}.` };
+  }
+
+  const total = matches.reduce((sum, t) => sum + t.amount, 0);
+  return {
+    kind: "vault-answer",
+    intent: "check_spending",
+    message: `You spent ${inr(total)} on ${itemLabel}${dateLabel}.`,
+    amount: total,
+  };
+}
+
 async function handleCheckSpending(
   supabase: SupabaseClient<Database>,
   userId: string,
   action: VaultAction
 ): Promise<VaultVoiceResult> {
   const range = action.datePhrase ? (parseDateRange(action.datePhrase) ?? undefined) : undefined;
+
+  if (action.itemEntity) {
+    return handleCheckSpendingForItem(supabase, userId, action.itemEntity, range);
+  }
+
   const insights = await computeSpendingInsights(supabase, userId, range);
 
   let total = insights.totalSpent;

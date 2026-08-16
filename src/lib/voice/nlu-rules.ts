@@ -1,7 +1,7 @@
 import { expandSearchTerms, normalizeNumberWords } from "@/lib/voice/synonyms";
 import { matchCategory } from "@/lib/vault/categories";
 import { parseMoneyExpression } from "@/lib/vault/money-parser";
-import type { NluResult, ParsedAddEntities, ParsedSearchQuery, VaultAction } from "@/lib/voice/types";
+import type { InventoryAction, NluResult, ParsedAddEntities, VaultAction } from "@/lib/voice/types";
 
 /**
  * Zero-dependency, zero-cost intent classifier + entity extractor. This is
@@ -125,6 +125,7 @@ const EMPTY_VAULT_ACTION: Omit<VaultAction, "intent" | "confidence"> = {
   newAmount: null,
   newCategory: null,
   recurring: null,
+  itemEntity: null,
 };
 
 /** Shared by add_money/deduct_money — amount from the raw transcript (never the 1-6-word-normalized text, which would mangle "five hundred" into "5 hundred"), category/comment from the trailing clause. */
@@ -171,7 +172,7 @@ function classifyVaultAction(normalized: string, rawTranscript: string): VaultAc
   return null;
 }
 
-function buildSearchQuery(normalized: string): ParsedSearchQuery {
+function buildInventoryAction(normalized: string): InventoryAction {
   let remainder = normalized.trim();
   for (const re of SEARCH_FILLERS) {
     if (re.test(remainder)) {
@@ -180,7 +181,15 @@ function buildSearchQuery(normalized: string): ParsedSearchQuery {
     }
   }
   remainder = stripPunctuation(remainder);
-  return { queryRaw: remainder, expandedTerms: expandSearchTerms(remainder) };
+  return {
+    intent: "search",
+    entity: remainder || null,
+    category: null,
+    roomPhrase: null,
+    furniturePhrase: null,
+    expandedTerms: expandSearchTerms(remainder),
+    confidence: "high",
+  };
 }
 
 const ROOM_WORDS = [
@@ -296,7 +305,7 @@ export function parseVoiceTranscript(rawTranscript: string): NluResult {
   if (vaultAction) return { intent: "vault", actions: [vaultAction] };
 
   if (isSearchIntent(normalized)) {
-    return { intent: "search", search: buildSearchQuery(normalized) };
+    return { intent: "inventory", action: buildInventoryAction(normalized) };
   }
   if (isAddIntent(normalized)) {
     return { intent: "add", add: extractAddEntities(normalized) };

@@ -6,7 +6,7 @@ import { buildLocationIndex, pathForStorageLocation, type LocationIndex, type Lo
 import { parseTranscript } from "@/lib/voice/nlu";
 import { fuzzyMatchByName } from "@/lib/voice/synonyms";
 import { processVaultVoiceCommand, type VaultSessionContext, type VaultVoiceResult } from "@/lib/actions/vault-voice";
-import type { ParsedAddEntities } from "@/lib/voice/types";
+import type { InventoryAction, ParsedAddEntities } from "@/lib/voice/types";
 import type { Database, Item, StorageLocation } from "@/lib/supabase/types";
 
 export type {
@@ -22,6 +22,16 @@ export interface VoiceSearchResult {
   kind: "search";
   query: string;
   results: { item: Item; path: LocationNode[] }[];
+  /** Plain-English description of this result, stored client-side and threaded back as previousTurnSummary context so a short follow-up ("what about last month?", "what else is there?") resolves against what was just shown. */
+  summary: string;
+}
+
+export interface VoiceLocationResult {
+  kind: "inventory-location";
+  roomName: string | null;
+  furnitureName: string | null;
+  results: { item: Item; path: LocationNode[] }[];
+  summary: string;
 }
 
 export interface ResolvedLocation {
@@ -47,7 +57,7 @@ export interface VoiceUnclearResult {
   transcript: string;
 }
 
-export type VoiceProcessResult = VoiceSearchResult | VoiceAddResult | VoiceUnclearResult | VaultVoiceResult;
+export type VoiceProcessResult = VoiceSearchResult | VoiceLocationResult | VoiceAddResult | VoiceUnclearResult | VaultVoiceResult;
 
 /** Priority order from section 19: exact name > partial name > category > tags > description > location. */
 function scoreItemAgainstTerms(item: Item, terms: string[]): number {
@@ -68,6 +78,175 @@ function scoreItemAgainstTerms(item: Item, terms: string[]): number {
     if (desc.includes(term) || container.includes(term)) best = Math.max(best, 30);
   }
   return best;
+}
+
+/** Shared scored-lookup used by search/item_details/category_search — ranks every item against a bag of terms, lightly boosting matches in the room the user is currently viewing. */
+function searchInventoryItems(
+  items: Item[],
+  index: LocationIndex,
+  terms: string[],
+  contextRoomId: string | undefined,
+  limit: number
+): { item: Item; path: LocationNode[] }[] {
+  return items
+    .map((item) => {
+      const path = pathForStorageLocation(index, item.storage_location_id);
+      if (!path) return null;
+
+      let score = scoreItemAgainstTerms(item, terms);
+      const locationNames = path.map((n) => n.name.toLowerCase());
+      if (terms.some((t) => t && locationNames.some((n) => n.includes(t.toLowerCase())))) {
+        score = Math.max(score, 20);
+      }
+      if (contextRoomId && path.some((n) => n.type === "room" && n.id === contextRoomId)) {
+        score += 5;
+      }
+      return score > 0 ? { item, path, score } : null;
+    })
+    .filter((r): r is { item: Item; path: LocationNode[]; score: number } => r !== null)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ item, path }) => ({ item, path }));
+}
+
+function summarizeItemResults(label: string, results: { item: Item; path: LocationNode[] }[]): string {
+  if (results.length === 0) return `No items found for ${label}.`;
+  const names = results.slice(0, 3).map((r) => r.item.name);
+  return `Found ${results.length} item${results.length === 1 ? "" : "s"} for ${label}: ${names.join(", ")}${results.length > 3 ? ", and more" : ""}.`;
+}
+
+/** search / item_details — a scored lookup driven by the entity + its expanded synonym/brand terms. item_details narrows the list since the user is asking about one specific thing. */
+async function handleInventorySearch(
+  supabase: SupabaseClient<Database>,
+  index: LocationIndex,
+  action: InventoryAction,
+  contextRoomId?: string
+): Promise<VoiceProcessResult> {
+  const entity = action.entity?.trim() ?? "";
+  const terms = action.expandedTerms.length ? action.expandedTerms : entity ? [entity] : [];
+
+  if (terms.length === 0) {
+    return { kind: "search", query: entity, results: [], summary: "Asked to search inventory with no clear item named." };
+  }
+
+  const { data: items } = await supabase.from("items").select("*");
+  const limit = action.intent === "item_details" ? 5 : 10;
+  const results = searchInventoryItems(items ?? [], index, terms, contextRoomId, limit);
+
+  return { kind: "search", query: entity, results, summary: summarizeItemResults(`"${entity}"`, results) };
+}
+
+/** location_search — everything under a named room and/or furniture, not filtered by item identity at all. */
+async function handleLocationSearch(
+  supabase: SupabaseClient<Database>,
+  index: LocationIndex,
+  action: InventoryAction
+): Promise<VoiceProcessResult> {
+  const rooms = Array.from(index.rooms.values());
+  const room = action.roomPhrase ? fuzzyMatchByName(action.roomPhrase, rooms) : null;
+
+  const allFurniture = Array.from(index.furniture.values());
+  const furnitureCandidates = room ? allFurniture.filter((f) => f.room_id === room.id) : allFurniture;
+  const furniture = action.furniturePhrase ? fuzzyMatchByName(action.furniturePhrase, furnitureCandidates) : null;
+
+  if (!room && !furniture) {
+    return { kind: "unclear", transcript: [action.roomPhrase, action.furniturePhrase].filter(Boolean).join(" ") || "that location" };
+  }
+
+  const { data: items } = await supabase.from("items").select("*");
+  const results = (items ?? [])
+    .map((item) => {
+      const path = pathForStorageLocation(index, item.storage_location_id);
+      if (!path) return null;
+      const matchesRoom = room ? path.some((n) => n.type === "room" && n.id === room.id) : true;
+      const matchesFurniture = furniture ? path.some((n) => n.type === "furniture" && n.id === furniture.id) : true;
+      return matchesRoom && matchesFurniture ? { item, path } : null;
+    })
+    .filter((r): r is { item: Item; path: LocationNode[] } => r !== null)
+    .slice(0, 20);
+
+  const label = [room?.name, furniture?.name].filter(Boolean).join(" → ") || "that location";
+  return {
+    kind: "inventory-location",
+    roomName: room?.name ?? null,
+    furnitureName: furniture?.name ?? null,
+    results,
+    summary: results.length
+      ? `Found ${results.length} item${results.length === 1 ? "" : "s"} in ${label}.`
+      : `Nothing found in ${label}.`,
+  };
+}
+
+/** category_search — filtered by item.category rather than a scored name/synonym match. */
+async function handleCategorySearch(
+  supabase: SupabaseClient<Database>,
+  index: LocationIndex,
+  action: InventoryAction
+): Promise<VoiceProcessResult> {
+  const categoryPhrase = (action.category ?? action.entity ?? "").trim();
+  const needle = categoryPhrase.toLowerCase();
+
+  const { data: items } = await supabase.from("items").select("*");
+  const results = (items ?? [])
+    .filter((item) => {
+      const category = item.category.toLowerCase();
+      return needle ? category.includes(needle) || needle.includes(category) : false;
+    })
+    .map((item) => {
+      const path = pathForStorageLocation(index, item.storage_location_id);
+      return path ? { item, path } : null;
+    })
+    .filter((r): r is { item: Item; path: LocationNode[] } => r !== null)
+    .slice(0, 20);
+
+  return {
+    kind: "search",
+    query: categoryPhrase,
+    results,
+    summary: results.length
+      ? `Found ${results.length} item${results.length === 1 ? "" : "s"} in ${categoryPhrase}.`
+      : `No items found in category "${categoryPhrase}".`,
+  };
+}
+
+/** recently_added — a plain recency-ordered list, no scoring involved. */
+async function handleRecentlyAdded(supabase: SupabaseClient<Database>, index: LocationIndex): Promise<VoiceProcessResult> {
+  const { data: items } = await supabase.from("items").select("*").order("created_at", { ascending: false }).limit(10);
+  const results = (items ?? [])
+    .map((item) => {
+      const path = pathForStorageLocation(index, item.storage_location_id);
+      return path ? { item, path } : null;
+    })
+    .filter((r): r is { item: Item; path: LocationNode[] } => r !== null);
+
+  return {
+    kind: "search",
+    query: "Recently added",
+    results,
+    summary: results.length
+      ? `Showed your ${results.length} most recently added items.`
+      : "No items have been added yet.",
+  };
+}
+
+async function handleInventoryAction(
+  supabase: SupabaseClient<Database>,
+  index: LocationIndex,
+  action: InventoryAction,
+  contextRoomId?: string
+): Promise<VoiceProcessResult> {
+  switch (action.intent) {
+    case "location_search":
+      return handleLocationSearch(supabase, index, action);
+    case "category_search":
+      return handleCategorySearch(supabase, index, action);
+    case "recently_added":
+      return handleRecentlyAdded(supabase, index);
+    case "search":
+    case "item_details":
+    default:
+      return handleInventorySearch(supabase, index, action, contextRoomId);
+  }
 }
 
 function titleCaseWords(text: string): string {
@@ -223,7 +402,8 @@ export async function processVoiceCommand(
     return processVaultVoiceCommand(transcript, context.vaultSession);
   }
 
-  const nlu = await parseTranscript(transcript);
+  const previousTurnSummary = context?.vaultSession?.previousTurnSummary ?? null;
+  const nlu = await parseTranscript(transcript, previousTurnSummary ? { previousTurnSummary } : undefined);
 
   if (nlu.intent === "vault") {
     return processVaultVoiceCommand(transcript, context?.vaultSession ?? null, nlu);
@@ -237,31 +417,8 @@ export async function processVoiceCommand(
 
   const index = await buildLocationIndex(supabase);
 
-  if (nlu.intent === "search") {
-    const { data: items } = await supabase.from("items").select("*");
-    const terms = nlu.search.expandedTerms.length ? nlu.search.expandedTerms : [nlu.search.queryRaw];
-
-    const scored = (items ?? [])
-      .map((item) => {
-        const path = pathForStorageLocation(index, item.storage_location_id);
-        if (!path) return null;
-
-        let score = scoreItemAgainstTerms(item, terms);
-        const locationNames = path.map((n) => n.name.toLowerCase());
-        if (terms.some((t) => locationNames.some((n) => n.includes(t.toLowerCase())))) {
-          score = Math.max(score, 20);
-        }
-        if (context?.roomId && path.some((n) => n.type === "room" && n.id === context.roomId)) {
-          score += 5;
-        }
-        return score > 0 ? { item, path, score } : null;
-      })
-      .filter((r): r is { item: Item; path: LocationNode[]; score: number } => r !== null)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10)
-      .map(({ item, path }) => ({ item, path }));
-
-    return { kind: "search", query: nlu.search.queryRaw, results: scored };
+  if (nlu.intent === "inventory") {
+    return handleInventoryAction(supabase, index, nlu.action, context?.roomId);
   }
 
   if (nlu.intent === "add") {

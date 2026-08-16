@@ -13,8 +13,8 @@ export const CATEGORY_KEYWORDS: Record<string, string[]> = {
   ],
   electronics: [
     "electronic", "electronics", "gadget", "gadgets", "charger", "cable", "camera", "phone",
-    "mobile", "laptop", "headphone", "headphones", "earphone", "earphones", "earbuds", "speaker",
-    "remote", "adapter", "battery", "router",
+    "mobile", "smartphone", "laptop", "headphone", "headphones", "earphone", "earphones", "earbuds", "speaker",
+    "remote", "adapter", "battery", "router", "tv", "television", "monitor", "tablet", "smartwatch",
   ],
   clothes: [
     "clothes", "clothing", "shirt", "shirts", "pant", "pants", "trouser", "trousers", "jacket",
@@ -42,6 +42,9 @@ const PHRASE_EXPANSIONS: Record<string, string[]> = {
   winter: ["jacket", "sweater", "blanket", "coat", "heater", "winter"],
   summer: ["t-shirt", "shorts", "sandals", "sunscreen", "summer"],
   baby: ["diaper", "diapers", "toy", "toys", "baby"],
+  bravia: ["tv", "television", "sony"],
+  iphone: ["phone", "smartphone", "apple", "mobile"],
+  airpods: ["earbuds", "earphones", "apple"],
 };
 
 /**

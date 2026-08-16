@@ -1,5 +1,14 @@
 import { expandSearchTerms } from "@/lib/voice/synonyms";
-import { VAULT_CATEGORIES, type ConfidenceLevel, type NluResult, type VaultAction, type VaultCategory, type VaultIntent } from "@/lib/voice/types";
+import {
+  VAULT_CATEGORIES,
+  type ConfidenceLevel,
+  type InventoryAction,
+  type InventoryIntent,
+  type NluResult,
+  type VaultAction,
+  type VaultCategory,
+  type VaultIntent,
+} from "@/lib/voice/types";
 
 /**
  * Optional richer NLU layer, and the primary brain for the vault voice
@@ -27,6 +36,15 @@ const TIMEOUT_MS = 8000;
 export interface VaultNluContext {
   pendingQuestion?: string | null;
   lastTransactionSummary?: string | null;
+  /**
+   * A plain-English sentence describing the previous turn's *result*
+   * (search or vault alike), e.g. "Showed grocery spending: ₹3,200 this
+   * month." or "Found the camera in Bedroom → Wardrobe." — generalizes
+   * lastTransactionSummary to read-only queries so a short follow-up like
+   * "what about last month?" or "what else is there?" resolves against
+   * what was just shown, not just the last money movement.
+   */
+  previousTurnSummary?: string | null;
 }
 
 interface GeminiVaultAction {
@@ -45,12 +63,24 @@ interface GeminiVaultAction {
   recurring_schedule_mode: "salary" | "date" | null;
   recurring_day_of_month: number | null;
   recurring_enabled: boolean | null;
+  /** A physical item named alongside this money question/action, e.g. "the TV" in "how much did I spend on the TV?". Resolved read-only against inventory downstream — never invents or edits an item. */
+  item_entity: string | null;
   confidence: ConfidenceLevel;
 }
 
+const INVENTORY_INTENT_ENUM: InventoryIntent[] = ["search", "item_details", "location_search", "category_search", "recently_added"];
+
 interface GeminiExtraction {
   domain: "search" | "add" | "vault" | "unclear";
+  search_intent: InventoryIntent | null;
+  /** The cleaned target entity/item phrase being searched for, e.g. "passport", "TV", "winter clothes" — filler words already stripped. */
   search_query: string | null;
+  /** For category_search — a category name/synonym as spoken, e.g. "electronics". */
+  search_category: string | null;
+  /** Your own semantic/brand-name/synonym expansion of search_query, e.g. "Bravia" -> ["tv","television","sony"], "sneakers" -> ["shoes","nike","air max"]. Empty array if nothing beyond the literal words applies. */
+  expanded_terms: string[];
+  /** Confidence for the search/add domains (vault actions carry their own per-action confidence). */
+  confidence: ConfidenceLevel;
   item_name: string | null;
   room: string | null;
   furniture: string | null;
@@ -91,6 +121,7 @@ const VAULT_ACTION_SCHEMA = {
     recurring_schedule_mode: { type: ["string", "null"], enum: ["salary", "date", null] },
     recurring_day_of_month: { type: ["number", "null"] },
     recurring_enabled: { type: ["boolean", "null"] },
+    item_entity: { type: ["string", "null"] },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
   },
   required: [
@@ -109,6 +140,7 @@ const VAULT_ACTION_SCHEMA = {
     "recurring_schedule_mode",
     "recurring_day_of_month",
     "recurring_enabled",
+    "item_entity",
     "confidence",
   ],
 };
@@ -117,26 +149,53 @@ const RESPONSE_SCHEMA = {
   type: "object",
   properties: {
     domain: { type: "string", enum: ["search", "add", "vault", "unclear"] },
+    search_intent: { type: ["string", "null"], enum: [...INVENTORY_INTENT_ENUM, null] },
     search_query: { type: ["string", "null"] },
+    search_category: { type: ["string", "null"] },
+    expanded_terms: { type: "array", items: { type: "string" } },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
     item_name: { type: ["string", "null"] },
     room: { type: ["string", "null"] },
     furniture: { type: ["string", "null"] },
     storage_location: { type: ["string", "null"] },
     vault_actions: { type: "array", items: VAULT_ACTION_SCHEMA },
   },
-  required: ["domain", "search_query", "item_name", "room", "furniture", "storage_location", "vault_actions"],
+  required: [
+    "domain",
+    "search_intent",
+    "search_query",
+    "search_category",
+    "expanded_terms",
+    "confidence",
+    "item_name",
+    "room",
+    "furniture",
+    "storage_location",
+    "vault_actions",
+  ],
 };
 
-const SYSTEM_PROMPT = `You are the natural-language layer for a home inventory app's voice search AND its savings vault voice assistant. Given a single spoken sentence (plus optional prior-turn context), classify it into a domain and extract structured fields. Never invent numbers, categories, rooms, or references that weren't actually said or clearly implied.
+const SYSTEM_PROMPT = `You are the natural-language layer for a home inventory app's search bar (both typed and spoken) AND its savings vault voice assistant. Given a single utterance (plus optional prior-turn context), classify it into a domain and extract structured fields. Never invent numbers, categories, rooms, or references that weren't actually said or clearly implied. Be tolerant of typos, missing punctuation, and casual/conversational phrasing (typed queries especially) — never fall back to "unclear" just because of a misspelling ("wher is my pasport" is still search, entity "passport").
 
-Two domains:
-- "search" — the user wants to find where a physical item is (e.g. "where is my passport", "find my camera", "which cupboard has the camera", "where did I keep the winter clothes").
+Four domains:
+- "search" — the user wants to find, list, or ask about physical inventory items. Covers five sub-intents (search_intent) described below.
 - "add" — the user wants to add a new physical item to their inventory (e.g. "add my black headphones", "I have a new camera", "I kept my charger in the wardrobe, add it").
 - "vault" — the user wants to do ANYTHING with their savings vault: add/deduct money, check balance or spending, view or modify transaction history, manage recurring savings, or ask an analytical question about their spending. See the vault intent list below.
-- "unclear" — you cannot confidently tell which of the above the user means.
+- "unclear" — you cannot confidently tell which of the above the user means, OR the query is too vague to act on (e.g. "show me my stuff", "what have I got") — still set search_intent="search" with entity null in this vague case so the caller can offer helpful categories, rather than a hard "unclear".
 
 Distinguishing "vault" from "search"/"add" — money vs. physical items:
-"how much did I spend on groceries?" -> vault (check_spending). "where did I keep the groceries?" -> search. "show me my grocery spending" -> vault. "where is my grocery stock?" -> search. When in doubt, a question about money amounts (spent/saved/added/balance) is vault; a question about a physical location is search.
+"how much did I spend on groceries?" -> vault (check_spending). "where did I keep the groceries?" -> search. "show me my grocery spending" -> vault. "where is my grocery stock?" -> search. When in doubt, a question about money amounts (spent/saved/added/balance) is vault; a question about a physical location, container, or "what do I have" is search.
+
+Search sub-intents (search_intent) — with search_query as the cleaned target entity/item phrase (filler words like "my"/"the"/"where is" stripped):
+- "search": general "where is X" / "find X" lookup, e.g. "where is my passport" (search_query="passport"), "find my camera".
+- "item_details": the user names one specific item and wants more about it, e.g. "tell me about my Sony TV", "what's in the box with my passport".
+- "location_search": the user names a room/furniture/container and wants everything in it, e.g. "what's in my bedroom wardrobe" (room="Bedroom", furniture="Wardrobe", search_query null), "what's on the kitchen shelf".
+- "category_search": the user names a category rather than a specific item, e.g. "show me my electronics", "what clothes do I have" (search_category="Electronics"/"Clothes").
+- "recently_added": e.g. "what did I add recently", "show me my newest items", "what's new in my inventory".
+
+Semantic/brand matching (expanded_terms): expand the entity into what it actually refers to using real-world knowledge — brand names to product types ("Bravia" -> ["tv","television","sony"], "iPhone" -> ["phone","smartphone","apple"]), colloquial names to catalog terms ("sneakers" -> ["shoes","nike","air max"]), synonyms ("specs"/"shades" -> ["glasses","sunglasses"]). Leave it an empty array when the entity is already literal with nothing more to add.
+
+Location-aware search: when a room or furniture name is mentioned (own field or as part of the phrase), fill room/furniture so results can be scoped to that container even if the item name itself is vague or absent.
 
 Vault intents (put in vault_actions[].intent) with examples straight from real usage:
 - "add_money": "add 5000 to my vault", "deposit 2000", "put 10k into savings".
@@ -151,6 +210,8 @@ Vault intents (put in vault_actions[].intent) with examples straight from real u
 - "set_recurring": "add 5000 to my vault and remind me to add another 5000 next month" -> TWO actions: add_money (amount=5000) AND set_recurring (recurring_amount=5000, recurring_enabled=true, recurring_schedule_mode="date" only if a specific day was named, else "salary").
 - "vault_insight": open-ended analytical questions like "where did most of my money go?", "what's my biggest expense this month?", "did I spend more this month than last month?", "what category is eating up my savings?".
 - "help": "what can you do?", "help".
+
+Combined vault+inventory queries (item_entity): when a vault question names a physical item rather than (or alongside) a category, e.g. "how much did I spend on the TV?" or "what did I spend on my new Sony TV last month?", keep intent as check_spending (category likely null unless also stated) and set item_entity to the item phrase ("TV"/"Sony TV") — this is resolved read-only against inventory downstream, never used to create or edit an item.
 
 Same-utterance self-correction (e.g. "Deduct 500 for food — actually make that 700", "Add 2000, sorry I meant 3000", "Deduct 800 for groceries... no, that's shopping"): resolve to ONE action with the user's FINAL intended amount/category — do not emit two actions and do not use edit_transaction/undo_transaction for these, since nothing was recorded yet.
 
@@ -170,7 +231,7 @@ Money amounts: parse natural expressions like "₹500", "500 rupees", "five hund
 
 Confidence: "high" when the request is unambiguous (clear amount + clear intent). "medium" when you understood the intent but something is a guess (e.g. inferred category from a vague clue). "low" when a required field (usually the amount) is missing or the whole utterance is vague — the app will ask the user to clarify rather than execute.
 
-Context you may receive before the final user utterance: a line like "(context: ...)" describing the most recent transaction in this session — use it to resolve corrections ("actually make that 4000") and bare "undo that" references. A message attributed to you (the model) is a clarifying question you just asked (e.g. "What was it for?") — interpret the user's final utterance as a direct, complete answer to that question (e.g. the user just says "groceries" — treat it as the category for the pending deduction, not as a new/unclear command).
+Context you may receive before the final user utterance: a line like "(context: ...)" describing the most recent transaction in this session — use it to resolve corrections ("actually make that 4000") and bare "undo that" references. A second, similar line may describe the previous turn's *result* in plain English regardless of domain (e.g. "Showed grocery spending: ₹3,200 this month." or "Found the camera in Bedroom → Wardrobe.") — use it to resolve short follow-ups that only make sense against what was just shown: "what about last month?" (re-run the same query with a new date_phrase/no other change), "what else is there?" (location_search/category_search again, same room/category), "show me another one" (search again, excluding what was just shown is not possible but re-run the same query). A message attributed to you (the model) is a clarifying question you just asked (e.g. "What was it for?") — interpret the user's final utterance as a direct, complete answer to that question (e.g. the user just says "groceries" — treat it as the category for the pending deduction, not as a new/unclear command).
 
 Respond with strict JSON matching the schema.`;
 
@@ -212,14 +273,29 @@ function toVaultAction(a: GeminiVaultAction): VaultAction {
             enabled: a.recurring_enabled ?? null,
           }
         : null,
+    itemEntity: a.item_entity?.trim() || null,
     confidence: a.confidence,
+  };
+}
+
+function toInventoryAction(extraction: GeminiExtraction): InventoryAction {
+  const entity = extraction.search_query?.trim() || null;
+  const localExpansion = entity ? expandSearchTerms(entity) : [];
+  const geminiExpansion = (extraction.expanded_terms ?? []).map((t) => t.trim().toLowerCase()).filter(Boolean);
+  return {
+    intent: extraction.search_intent ?? "search",
+    entity,
+    category: extraction.search_category?.trim() || null,
+    roomPhrase: extraction.room?.trim() || null,
+    furniturePhrase: extraction.furniture?.trim() || null,
+    expandedTerms: Array.from(new Set([...localExpansion, ...geminiExpansion])),
+    confidence: extraction.confidence,
   };
 }
 
 function toNluResult(transcript: string, extraction: GeminiExtraction): NluResult {
   if (extraction.domain === "search") {
-    const query = (extraction.search_query ?? transcript).trim();
-    return { intent: "search", search: { queryRaw: query, expandedTerms: expandSearchTerms(query) } };
+    return { intent: "inventory", action: toInventoryAction(extraction) };
   }
   if (extraction.domain === "add") {
     return {
@@ -251,6 +327,9 @@ export async function parseWithGemini(transcript: string, context?: VaultNluCont
   const contents: { role: string; parts: { text: string }[] }[] = [];
   if (context?.lastTransactionSummary) {
     contents.push({ role: "user", parts: [{ text: `(context: ${context.lastTransactionSummary})` }] });
+  }
+  if (context?.previousTurnSummary) {
+    contents.push({ role: "user", parts: [{ text: `(context: previous result — ${context.previousTurnSummary})` }] });
   }
   if (context?.pendingQuestion) {
     contents.push({ role: "model", parts: [{ text: context.pendingQuestion }] });

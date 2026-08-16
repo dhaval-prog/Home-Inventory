@@ -1,8 +1,25 @@
-export type VoiceIntent = "search" | "add" | "vault" | "unclear";
+/**
+ * The home-inventory (physical item) side of the assistant's intent
+ * taxonomy — mirrors VaultIntent below. Several of the spec's named intents
+ * are the same underlying lookup with different filters: "search" and
+ * "item_details" both resolve to a scored item list (item_details usually
+ * narrows to one clear match), "location_search" lists everything under a
+ * named room/furniture, "category_search" filters by item.category, and
+ * "recently_added" is a plain recency-ordered list.
+ */
+export type InventoryIntent = "search" | "item_details" | "location_search" | "category_search" | "recently_added";
 
-export interface ParsedSearchQuery {
-  queryRaw: string;
+export interface InventoryAction {
+  intent: InventoryIntent;
+  /** Cleaned entity phrase, e.g. "passport", "TV" — filler words stripped. */
+  entity: string | null;
+  /** For category_search — a category name/synonym as spoken. */
+  category: string | null;
+  roomPhrase: string | null;
+  furniturePhrase: string | null;
+  /** Gemini's own synonym/brand-name expansion (e.g. "Bravia" -> ["tv", "television"]); merged with the local expandSearchTerms dictionary downstream. */
   expandedTerms: string[];
+  confidence: ConfidenceLevel;
 }
 
 export interface ParsedAddEntities {
@@ -82,11 +99,13 @@ export interface VaultAction {
   newAmount: number | null;
   newCategory: VaultCategory | null;
   recurring: RecurringEntities | null;
+  /** Combined vault+inventory query — a physical item named alongside a money question, e.g. "how much did I spend on the TV?". Resolved read-only against inventory; never creates or edits an item. */
+  itemEntity: string | null;
   confidence: ConfidenceLevel;
 }
 
 export type NluResult =
-  | { intent: "search"; search: ParsedSearchQuery }
+  | { intent: "inventory"; action: InventoryAction }
   | { intent: "add"; add: ParsedAddEntities }
   | { intent: "vault"; actions: VaultAction[] }
   | { intent: "unclear"; transcript: string };
