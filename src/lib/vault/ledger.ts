@@ -13,11 +13,15 @@ export interface VaultSummary {
  * can never drift from what's actually in transaction history.
  */
 export async function getVaultSummary(supabase: SupabaseClient<Database>, userId: string): Promise<VaultSummary> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("vault_transactions")
     .select("*")
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("vault: failed to load vault_transactions —", error.message, error.code ? `(${error.code})` : "");
+  }
 
   const transactions = data ?? [];
   let balance = 0;
@@ -83,7 +87,10 @@ export async function recordVaultTransaction(
     .select("*")
     .single();
 
-  if (error || !data) return { ok: false, error: "Something went wrong. Please try again." };
+  if (error || !data) {
+    console.error("vault: failed to insert vault_transactions row —", error?.message, error?.code ? `(${error.code})` : "");
+    return { ok: false, error: "Something went wrong. Please try again." };
+  }
 
   const balance = input.type === "deduct" ? summary.balance - amount : summary.balance + amount;
   return { ok: true, transaction: data, balance };
