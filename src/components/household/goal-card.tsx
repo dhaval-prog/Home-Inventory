@@ -44,7 +44,7 @@ export function GoalCard({ summary, canDelete }: { summary: HouseholdGoalSummary
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, startDeleteTransition] = useTransition();
 
-  const { goal, currentAmount, progressPct } = summary;
+  const { goal, currentAmount, progressPct, creatorName } = summary;
 
   useEffect(() => {
     if (!open) return;
@@ -70,6 +70,7 @@ export function GoalCard({ summary, canDelete }: { summary: HouseholdGoalSummary
             </span>
             <span className="text-xs text-muted-foreground">{progressPct}%</span>
           </div>
+          <p className="mt-0.5 text-[11px] text-muted-foreground/70">Created by {creatorName}</p>
           <Progress value={progressPct} max={100} className="mt-3" />
           <p className="mt-2 text-xs text-muted-foreground">
             {inr(currentAmount)} of {inr(goal.target_amount)}

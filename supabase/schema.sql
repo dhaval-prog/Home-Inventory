@@ -302,12 +302,19 @@ create table if not exists public.household_members (
   id uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households (id) on delete cascade,
   user_id uuid not null references auth.users (id) on delete cascade,
-  role text not null check (role in ('owner', 'member', 'viewer', 'limited_member')),
+  role text not null check (role in ('owner', 'co_owner', 'member', 'viewer', 'limited_member')),
   joined_at timestamptz not null default now(),
   unique (household_id, user_id)
 );
 create index if not exists household_members_household_id_idx on public.household_members (household_id);
 create index if not exists household_members_user_id_idx on public.household_members (user_id);
+
+-- widen an existing install's role check to allow co_owner (promoted by the
+-- owner via updateMemberRole — never directly invitable, see household_invites'
+-- own role check below, which is deliberately NOT widened).
+alter table public.household_members drop constraint if exists household_members_role_check;
+alter table public.household_members add constraint household_members_role_check
+  check (role in ('owner', 'co_owner', 'member', 'viewer', 'limited_member'));
 
 create table if not exists public.household_invites (
   id uuid primary key default gen_random_uuid(),
@@ -423,7 +430,21 @@ language sql stable security definer set search_path = public
 as $$
   select exists (
     select 1 from household_members
-    where household_id = p_household_id and user_id = auth.uid() and role in ('owner', 'member', 'limited_member')
+    where household_id = p_household_id and user_id = auth.uid() and role in ('owner', 'co_owner', 'member', 'limited_member')
+  );
+$$;
+
+-- Owner and co-owner only — the one extra capability a promotion grants.
+-- Deliberately NOT folded into is_household_owner: a co-owner can invite but
+-- still can't update household_members (see household_members_update_owner),
+-- so they can never promote anyone else, including themselves, to owner.
+create or replace function public.can_invite_to_household(p_household_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from household_members
+    where household_id = p_household_id and user_id = auth.uid() and role in ('owner', 'co_owner')
   );
 $$;
 
@@ -658,6 +679,9 @@ create policy "household_members_select_member" on public.household_members for 
 drop policy if exists "household_members_insert_self" on public.household_members;
 create policy "household_members_insert_self" on public.household_members for insert
   with check (user_id = auth.uid());
+-- Owner-only, deliberately not can_invite_to_household — this is the one
+-- policy that gates promoteToCoOwner()/updateMemberRole(), so a co-owner can
+-- never promote anyone (including themselves) to owner or co-owner.
 drop policy if exists "household_members_update_owner" on public.household_members;
 create policy "household_members_update_owner" on public.household_members for update
   using (is_household_owner(household_id)) with check (is_household_owner(household_id));
@@ -683,12 +707,17 @@ create policy "profiles_select_household_members" on public.profiles for select
 drop policy if exists "household_invites_select_member" on public.household_invites;
 create policy "household_invites_select_member" on public.household_invites for select
   using (is_household_member(household_id));
+-- Owner or co-owner may generate an invite — see can_invite_to_household()
+-- above. This is the real permission gate; generateInvite()/InviteMemberDialog
+-- only ever hide the UI for everyone else.
 drop policy if exists "household_invites_insert_owner" on public.household_invites;
-create policy "household_invites_insert_owner" on public.household_invites for insert
-  with check (is_household_owner(household_id) and created_by = auth.uid());
+drop policy if exists "household_invites_insert_inviter" on public.household_invites;
+create policy "household_invites_insert_inviter" on public.household_invites for insert
+  with check (can_invite_to_household(household_id) and created_by = auth.uid());
 drop policy if exists "household_invites_update_owner" on public.household_invites;
-create policy "household_invites_update_owner" on public.household_invites for update
-  using (is_household_owner(household_id)) with check (is_household_owner(household_id));
+drop policy if exists "household_invites_update_inviter" on public.household_invites;
+create policy "household_invites_update_inviter" on public.household_invites for update
+  using (can_invite_to_household(household_id)) with check (can_invite_to_household(household_id));
 
 drop policy if exists "household_vaults_select_member" on public.household_vaults;
 create policy "household_vaults_select_member" on public.household_vaults for select

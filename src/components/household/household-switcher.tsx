@@ -53,7 +53,7 @@ export function HouseholdSwitcher({ households, currentId }: { households: House
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" />
-            Create New Household
+            Create Your Own
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setJoinOpen(true)}>
             <Users className="size-4" />

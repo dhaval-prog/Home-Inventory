@@ -50,6 +50,7 @@ export default async function HouseholdPage({ searchParams }: { searchParams: Pr
   if (!context || !summary) redirect(`/household?id=${memberships[0].household.id}`);
 
   const isOwner = context.myRole === "owner";
+  const canInvite = context.myRole === "owner" || context.myRole === "co_owner";
   const myUserId = context.members.find((m) => m.isMe)?.userId;
   const activeGoals = summary.goals.filter((g) => g.goal.status === "active");
 
@@ -67,7 +68,7 @@ export default async function HouseholdPage({ searchParams }: { searchParams: Pr
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <HouseholdSwitcher households={memberships} currentId={householdId} />
-          <InviteMemberDialog householdId={householdId} />
+          <InviteMemberDialog householdId={householdId} canInvite={canInvite} />
           <CreateGoalDialog householdId={householdId} />
         </div>
       </div>
@@ -111,17 +112,21 @@ export default async function HouseholdPage({ searchParams }: { searchParams: Pr
                 </CardHeader>
                 <CardContent className="mt-3 p-0">
                   <ul className="space-y-3">
-                    {summary.memberContributions.map((m) => (
-                      <MemberRow
-                        key={m.userId}
-                        householdId={householdId}
-                        userId={m.userId}
-                        name={m.name}
-                        role={context.members.find((cm) => cm.userId === m.userId)?.role ?? "member"}
-                        totalContributed={m.totalContributed}
-                        canRemove={isOwner && m.userId !== myUserId}
-                      />
-                    ))}
+                    {summary.memberContributions.map((m) => {
+                      const role = context.members.find((cm) => cm.userId === m.userId)?.role ?? "member";
+                      return (
+                        <MemberRow
+                          key={m.userId}
+                          householdId={householdId}
+                          userId={m.userId}
+                          name={m.name}
+                          role={role}
+                          totalContributed={m.totalContributed}
+                          canRemove={isOwner && m.userId !== myUserId}
+                          canPromote={isOwner && role === "member" && m.userId !== myUserId}
+                        />
+                      );
+                    })}
                   </ul>
                 </CardContent>
               </Card>

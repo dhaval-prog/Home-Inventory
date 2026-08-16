@@ -1,23 +1,29 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { UserPlus, Copy, Check } from "lucide-react";
+import { UserPlus, Copy, Check, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { generateInvite } from "@/lib/actions/household";
-import type { HouseholdRole } from "@/lib/supabase/types";
+import type { HouseholdInviteRole } from "@/lib/supabase/types";
 
-const ROLE_OPTIONS: { value: Exclude<HouseholdRole, "owner">; label: string; description: string }[] = [
+const ROLE_OPTIONS: { value: HouseholdInviteRole; label: string; description: string }[] = [
   { value: "member", label: "Member", description: "Can contribute, create goals, and use the household chat." },
   { value: "viewer", label: "Viewer", description: "Can see shared savings and goals, but can't change anything." },
   { value: "limited_member", label: "Limited Member", description: "For kids or restricted access — personal vault + limited visibility." },
 ];
 
-export function InviteMemberDialog({ householdId }: { householdId: string }) {
+/**
+ * `canInvite` is computed server-side from the caller's role in THIS
+ * household (owner/co-owner) and only ever hides the trigger — the real gate
+ * is the household_invites_insert_inviter RLS policy (see supabase/schema.sql),
+ * so a locked-out member can't just call generateInvite() directly either.
+ */
+export function InviteMemberDialog({ householdId, canInvite }: { householdId: string; canInvite: boolean }) {
   const [open, setOpen] = useState(false);
-  const [role, setRole] = useState<Exclude<HouseholdRole, "owner">>("member");
+  const [role, setRole] = useState<HouseholdInviteRole>("member");
   const [token, setToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +33,25 @@ export function InviteMemberDialog({ householdId }: { householdId: string }) {
     setToken(null);
     setCopied(false);
     setError(null);
+  }
+
+  if (!canInvite) {
+    // Deliberately not the native `disabled` attribute — that sets
+    // pointer-events:none, which would also swallow hover and hide the
+    // tooltip explaining *why* it's locked. There's no onClick here, so it's
+    // already inert; aria-disabled just tells assistive tech the same thing.
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        aria-disabled="true"
+        title="Only the Owner or Co-Owners can invite members."
+        className="cursor-not-allowed text-muted-foreground/70 opacity-60 hover:bg-background hover:text-muted-foreground/70"
+      >
+        <Lock className="size-3.5" />
+        Invite
+      </Button>
+    );
   }
 
   return (
@@ -73,9 +98,9 @@ export function InviteMemberDialog({ householdId }: { householdId: string }) {
         ) : (
           <div className="space-y-2">
             <Label>Role</Label>
-            <Select value={role} onValueChange={(v) => setRole(v as Exclude<HouseholdRole, "owner">)}>
+            <Select value={role} onValueChange={(v) => setRole(v as HouseholdInviteRole)}>
               <SelectTrigger className="w-full">
-                <SelectValue>{(v: Exclude<HouseholdRole, "owner">) => ROLE_OPTIONS.find((r) => r.value === v)?.label}</SelectValue>
+                <SelectValue>{(v: HouseholdInviteRole) => ROLE_OPTIONS.find((r) => r.value === v)?.label}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {ROLE_OPTIONS.map((r) => (

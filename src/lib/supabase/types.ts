@@ -118,12 +118,19 @@ export type VaultRecurringPlan = {
 };
 
 /**
- * A member's role within one household — separate from any global app role.
- * Enforced by RLS (is_household_member/is_household_owner/
+ * A member's role within one household — separate from any global app role,
+ * and separate from the caller's role in any OTHER household (see
+ * household_members: one row per household/user pair). Enforced by RLS
+ * (is_household_member/is_household_owner/can_invite_to_household/
  * can_contribute_to_household in supabase/schema.sql), never trusted from
- * the client alone.
+ * the client alone. `co_owner` is granted only by the owner promoting an
+ * existing member (updateMemberRole) — it's never a directly invitable role,
+ * see HouseholdInviteRole below.
  */
-export type HouseholdRole = "owner" | "member" | "viewer" | "limited_member";
+export type HouseholdRole = "owner" | "co_owner" | "member" | "viewer" | "limited_member";
+
+/** Roles a household invite can grant directly — co_owner is promotion-only, never invited into directly. */
+export type HouseholdInviteRole = "member" | "viewer" | "limited_member";
 
 /** private = owner only, selected = specific members, home = every member. */
 export type HouseholdVisibility = "private" | "selected" | "home";
@@ -152,7 +159,7 @@ export type HouseholdInvite = {
   household_id: string;
   token: string;
   created_by: string;
-  role: Exclude<HouseholdRole, "owner">;
+  role: HouseholdInviteRole;
   status: HouseholdInviteStatus;
   expires_at: string;
   created_at: string;
@@ -312,7 +319,7 @@ export type Database = {
           household_id: string;
           token: string;
           created_by: string;
-          role: Exclude<HouseholdRole, "owner">;
+          role: HouseholdInviteRole;
         };
         Update: Partial<HouseholdInvite>;
         Relationships: [];

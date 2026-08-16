@@ -4,7 +4,7 @@ import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { displayName } from "@/lib/utils";
-import type { Household, HouseholdRole } from "@/lib/supabase/types";
+import type { Household, HouseholdInviteRole, HouseholdRole } from "@/lib/supabase/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 
@@ -159,7 +159,7 @@ export async function getHouseholdContext(householdId: string): Promise<Househol
 
 export async function generateInvite(
   householdId: string,
-  role: Exclude<HouseholdRole, "owner">
+  role: HouseholdInviteRole
 ): Promise<{ token: string; expiresAt: string } | { error: string }> {
   const supabase = await createClient();
   const {
@@ -173,7 +173,8 @@ export async function generateInvite(
     .insert({ household_id: householdId, token, created_by: user.id, role })
     .select()
     .single();
-  if (error || !data) return { error: error?.message ?? "Failed to create invite. Only the household owner can invite members." };
+  if (error || !data)
+    return { error: error?.message ?? "Failed to create invite. Only the household owner or a co-owner can invite members." };
 
   revalidatePath("/household");
   return { token: data.token, expiresAt: data.expires_at };
@@ -198,10 +199,17 @@ export async function removeMember(householdId: string, memberUserId: string): P
   return { ok: true };
 }
 
+/**
+ * Household ownership is never transferred through this action — only the
+ * roles below can be assigned. RLS (household_members_update_owner) already
+ * restricts the *caller* to the household owner; this restricts the *target*
+ * role so an owner can't accidentally (or a compromised client can't) mint a
+ * second owner.
+ */
 export async function updateMemberRole(
   householdId: string,
   memberUserId: string,
-  role: HouseholdRole
+  role: Exclude<HouseholdRole, "owner">
 ): Promise<{ ok: true } | { error: string }> {
   const supabase = await createClient();
   const { error } = await supabase.from("household_members").update({ role }).eq("household_id", householdId).eq("user_id", memberUserId);
@@ -209,4 +217,9 @@ export async function updateMemberRole(
 
   revalidatePath("/household");
   return { ok: true };
+}
+
+/** Promotes a member to co-owner — only the household owner can do this (enforced by household_members_update_owner RLS, not just this call site). A co-owner immediately gains invite rights (can_invite_to_household) and everything a contributing member already had. */
+export async function promoteToCoOwner(householdId: string, memberUserId: string): Promise<{ ok: true } | { error: string }> {
+  return updateMemberRole(householdId, memberUserId, "co_owner");
 }

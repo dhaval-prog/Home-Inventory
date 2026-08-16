@@ -10,6 +10,8 @@ export interface HouseholdGoalSummary {
   /** Always derived live by summing household_vault_transactions — never trusted from a cached column, mirroring getVaultSummary's approach for the personal vault. */
   currentAmount: number;
   progressPct: number;
+  /** The goal creator's display name — dynamic from their profile (see displayName()), never a hardcoded label, and shown to every household member regardless of who's logged in. */
+  creatorName: string;
 }
 
 export interface GoalContributor {
@@ -49,9 +51,20 @@ export async function listGoals(householdId: string, opts?: { status?: Household
     totalsByVault.set(t.vault_id, (totalsByVault.get(t.vault_id) ?? 0) + delta);
   }
 
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .in("id", Array.from(new Set(goals.map((g) => g.created_by))));
+  const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
+
   return goals.map((goal) => {
     const currentAmount = totalsByVault.get(goal.vault_id) ?? 0;
-    return { goal, currentAmount, progressPct: computeProgress(currentAmount, goal.target_amount) };
+    return {
+      goal,
+      currentAmount,
+      progressPct: computeProgress(currentAmount, goal.target_amount),
+      creatorName: displayName(profileById.get(goal.created_by)),
+    };
   });
 }
 
@@ -118,7 +131,7 @@ export async function getGoalDetail(goalId: string): Promise<HouseholdGoalDetail
   const { data: profiles } = await supabase
     .from("profiles")
     .select("*")
-    .in("id", Array.from(byUser.keys()));
+    .in("id", Array.from(new Set([...byUser.keys(), goal.created_by])));
   const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
 
   const contributors: GoalContributor[] = Array.from(byUser.entries())
@@ -133,7 +146,13 @@ export async function getGoalDetail(goalId: string): Promise<HouseholdGoalDetail
     }))
     .sort((a, b) => b.amount - a.amount);
 
-  return { goal, currentAmount, progressPct: computeProgress(currentAmount, goal.target_amount), contributors };
+  return {
+    goal,
+    currentAmount,
+    progressPct: computeProgress(currentAmount, goal.target_amount),
+    creatorName: displayName(profileById.get(goal.created_by)),
+    contributors,
+  };
 }
 
 /**
