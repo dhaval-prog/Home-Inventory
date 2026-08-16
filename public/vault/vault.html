@@ -1,0 +1,1726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vault</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vault/vendor/three/build/three.module.js",
+    "three/addons/controls/OrbitControls.js": "/vault/vendor/three/examples/jsm/controls/OrbitControls.js",
+    "three/addons/exporters/OBJExporter.js": "/vault/vendor/three/examples/jsm/exporters/OBJExporter.js",
+    "three/addons/exporters/GLTFExporter.js": "/vault/vendor/three/examples/jsm/exporters/GLTFExporter.js"
+  }
+}
+</script>
+<style>
+  :root{
+    --bg:#0e0f11;
+    --ink:#eceae6;
+    --ink-dim:#9b9893;
+    --ink-faint:#6a6864;
+    --line:rgba(236,234,230,.10);
+    --line-strong:rgba(236,234,230,.18);
+    --glass:rgba(24,25,28,.62);
+    --brass:oklch(0.78 0.11 82);
+    --pos:oklch(0.76 0.11 155);
+    --neg:oklch(0.68 0.14 32);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:'Sora',Helvetica,Arial,sans-serif;font-weight:300;
+    -webkit-font-smoothing:antialiased;overflow:hidden;
+  }
+  a{color:var(--brass);text-decoration:none}
+  a:hover{color:var(--ink)}
+  canvas{display:block;touch-action:none}
+  #stage{position:fixed;inset:0}
+  #vignette{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 45%,transparent 40%,rgba(0,0,0,.55) 100%)}
+  #ui{position:fixed;inset:0;pointer-events:none;display:flex;flex-direction:column;justify-content:space-between}
+  .pe{pointer-events:auto}
+  .mono{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+  .lbl{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-faint)}
+
+  /* top bar */
+  header{display:flex;align-items:center;justify-content:space-between;padding:22px 26px 10px;gap:16px}
+  .brand{display:flex;align-items:center;gap:10px}
+  .mark{width:22px;height:22px;border:1px solid var(--line-strong);border-radius:5px;
+    display:grid;place-items:center;background:linear-gradient(150deg,rgba(255,255,255,.10),transparent)}
+  .mark i{display:block;width:6px;height:6px;border-radius:50%;background:var(--brass)}
+  .brand b{font-weight:500;font-size:13px;letter-spacing:.22em}
+  .chip{display:flex;align-items:center;gap:9px;padding:8px 13px;border:1px solid var(--line);
+    border-radius:999px;background:var(--glass);backdrop-filter:blur(14px);font-size:10.5px;
+    letter-spacing:.18em;text-transform:uppercase;color:var(--ink-dim)}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--neg);box-shadow:0 0 12px currentColor;color:var(--neg)}
+  .chip[data-s="open"] .dot,.chip[data-s="granted"] .dot{background:var(--pos);color:var(--pos)}
+  .chip[data-s="busy"] .dot{background:var(--brass);color:var(--brass)}
+
+  /* panels */
+  .card{background:var(--glass);backdrop-filter:blur(18px) saturate(1.1);
+    border:1px solid var(--line);border-radius:16px;
+    box-shadow:0 24px 60px -28px rgba(0,0,0,.85),inset 0 1px 0 rgba(255,255,255,.06)}
+  main{flex:1;display:flex;align-items:stretch;justify-content:space-between;padding:0 26px;gap:24px;min-height:0}
+  .side{width:288px;height:100%;position:relative}
+  .side.right{align-items:flex-end}
+
+  /* balance */
+  #balanceCard{position:absolute;top:50%;left:0;width:100%;padding:20px 22px;
+    opacity:0;pointer-events:none;transform:translateY(calc(-50% + 8px));transition:opacity .5s,transform .5s}
+  #balanceCard.show{opacity:1;pointer-events:auto;transform:translateY(-50%)}
+  #balanceVal{font-size:38px;font-weight:300;letter-spacing:-.02em;margin:10px 0 2px;line-height:1}
+  .sub{font-size:11.5px;color:var(--ink-dim)}
+  .metaRow{display:flex;gap:18px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+  .metaRow div{display:flex;flex-direction:column;gap:5px}
+  .metaRow span:last-child{font-size:12px;color:var(--ink)}
+
+  /* keypad */
+  #lockCard{position:absolute;top:50%;left:0;padding:22px;width:100%;max-height:calc(100vh - 190px);overflow:auto;
+    opacity:0;pointer-events:none;transform:translateY(calc(-50% + 10px));transition:opacity .5s,transform .5s}
+  #lockCard.show{opacity:1;pointer-events:auto;transform:translateY(-50%)}
+  #pinDots{display:flex;gap:9px;margin:14px 0 4px}
+  #pinDots i{width:10px;height:10px;border-radius:50%;border:1px solid var(--line-strong);transition:.2s}
+  #pinDots i.on{background:var(--brass);border-color:var(--brass);box-shadow:0 0 14px rgba(212,175,110,.5)}
+  #pinDots.err i{border-color:var(--neg)}
+  #keys{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}
+  #keys button{aspect-ratio:1/1;min-height:44px;border:1px solid var(--line);background:rgba(255,255,255,.03);
+    color:var(--ink);border-radius:11px;font-family:'IBM Plex Mono',monospace;font-size:16px;cursor:pointer;
+    transition:.15s;display:grid;place-items:center}
+  #keys button:hover{background:rgba(255,255,255,.09);border-color:var(--line-strong)}
+  #keys button:active{transform:scale(.96)}
+  #keys button.wide{font-family:'Sora';font-size:10px;letter-spacing:.14em;text-transform:uppercase}
+  #hint{font-size:10.5px;color:var(--ink-faint);margin-top:14px;letter-spacing:.04em}
+  #lockMsg{font-size:11px;color:var(--neg);height:14px;margin-top:8px;letter-spacing:.04em}
+
+  /* actions */
+  footer{display:flex;justify-content:center;padding:0 26px 20px}
+  #actions{display:flex;gap:8px;padding:9px;opacity:0;transform:translateY(12px);
+    transition:opacity .5s,transform .5s;flex-wrap:wrap;justify-content:center}
+  #actions.show{opacity:1;transform:none}
+  .btn{display:flex;align-items:center;gap:8px;padding:12px 16px;min-height:44px;border-radius:11px;
+    border:1px solid transparent;background:transparent;color:var(--ink-dim);font-family:'Sora';font-weight:400;
+    font-size:12px;letter-spacing:.02em;cursor:pointer;transition:.18s;white-space:nowrap}
+  .btn:hover{background:rgba(255,255,255,.06);color:var(--ink);border-color:var(--line)}
+  .btn:disabled{opacity:.35;cursor:default}
+  .btn.primary{background:var(--brass);color:#17140e;font-weight:500}
+  .btn.primary:hover{filter:brightness(1.08);background:var(--brass);color:#17140e}
+  .btn.ghost{border-color:var(--line)}
+  .btn .k{width:7px;height:7px;border-radius:2px;background:currentColor;opacity:.55}
+
+  /* modal */
+  #scrim{position:fixed;inset:0;z-index:20;background:rgba(6,6,7,.55);backdrop-filter:blur(3px);
+    opacity:0;pointer-events:none;transition:opacity .3s}
+  #scrim.show{opacity:1;pointer-events:auto}
+  .sheet{z-index:21;position:fixed;left:50%;top:50%;transform:translate(-50%,-46%) scale(.98);width:420px;max-width:calc(100vw - 32px);
+    max-height:min(86vh,780px);overflow:auto;padding:24px;opacity:0;pointer-events:none;
+    transition:opacity .32s cubic-bezier(.2,.7,.2,1),transform .32s cubic-bezier(.2,.7,.2,1)}
+  .sheet.show{opacity:1;transform:translate(-50%,-50%);pointer-events:auto}
+  .sheet h2{font-size:17px;font-weight:400;margin:0 0 4px;letter-spacing:.01em}
+  .sheet p.note{font-size:12px;color:var(--ink-dim);margin:0 0 20px}
+  .field{margin-bottom:14px}
+  .field label{display:block;margin-bottom:7px}
+  .field input[type=text],.field input[type=number],.field select{width:100%;padding:13px 14px;border-radius:11px;
+    border:1px solid var(--line-strong);background:rgba(255,255,255,.04);color:var(--ink);
+    font-family:'IBM Plex Mono',monospace;font-size:15px;outline:none;transition:.18s}
+  .field input:focus,.field select:focus{border-color:var(--brass);background:rgba(255,255,255,.07)}
+  .field input::placeholder{color:var(--ink-faint);font-size:13px}
+  .field.text input{font-family:'Sora';font-size:13px;font-weight:300}
+  .presets{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+  .presets button{padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:transparent;
+    color:var(--ink-dim);font-family:'IBM Plex Mono',monospace;font-size:11.5px;cursor:pointer;transition:.15s}
+  .presets button:hover,.presets button.on{border-color:var(--brass);color:var(--brass)}
+  .ledger{border:1px solid var(--line);border-radius:12px;padding:4px 14px;margin:18px 0}
+  .ledger div{display:flex;justify-content:space-between;align-items:center;padding:11px 0;font-size:12.5px;
+    color:var(--ink-dim);border-bottom:1px solid var(--line)}
+  .ledger div:last-child{border-bottom:0}
+  .ledger div b{font-family:'IBM Plex Mono',monospace;font-weight:400;color:var(--ink);font-size:13.5px}
+  .ledger div.tot b{color:var(--brass);font-size:15px}
+  .err{font-size:11.5px;color:var(--neg);min-height:15px;margin:-6px 0 10px;letter-spacing:.03em}
+  .rowBtns{display:flex;gap:9px;margin-top:6px}
+  .rowBtns .btn{flex:1;justify-content:center}
+  .switch{display:flex;align-items:center;justify-content:space-between;padding:14px;border:1px solid var(--line);
+    border-radius:12px;margin-bottom:14px}
+  .switch b{font-weight:400;font-size:13px;display:block}
+  .switch small{color:var(--ink-dim);font-size:11px}
+  .tog{width:44px;height:26px;border-radius:999px;border:1px solid var(--line-strong);background:rgba(255,255,255,.05);
+    position:relative;cursor:pointer;flex:0 0 auto;transition:.22s}
+  .tog:after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+    background:var(--ink-dim);transition:.22s}
+  .tog.on{background:rgba(212,175,110,.22);border-color:var(--brass)}
+  .tog.on:after{left:21px;background:var(--brass)}
+  .info{padding:13px 14px;border-radius:11px;background:rgba(212,175,110,.08);border:1px solid rgba(212,175,110,.25);
+    font-size:12px;color:#e6d3ac;line-height:1.55;margin-bottom:14px}
+
+  /* history */
+  .filters{display:flex;gap:7px;margin-bottom:6px}
+  .filters button{flex:1;padding:9px 6px;border-radius:9px;border:1px solid var(--line);background:transparent;
+    color:var(--ink-faint);font-family:'Sora';font-size:10px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:.15s}
+  .filters button.on{color:var(--ink);border-color:var(--line-strong);background:rgba(255,255,255,.06)}
+  #txList{display:flex;flex-direction:column}
+  .tx{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:14px 2px;border-bottom:1px solid var(--line)}
+  .tx:last-child{border-bottom:0}
+  .tx .t{font-size:13px}
+  .tx .d{font-size:10.5px;color:var(--ink-faint);letter-spacing:.1em;text-transform:uppercase}
+  .tx .a{font-family:'IBM Plex Mono',monospace;font-size:14px;text-align:right}
+  .tx .a.p{color:var(--pos)}
+  .tx .a.n{color:var(--neg)}
+  .tx .b{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--ink-faint);text-align:right}
+  .empty{padding:26px 0;text-align:center;color:var(--ink-faint);font-size:12px}
+
+  /* money inspect panel */
+  #moneyPanel{z-index:16;position:fixed;right:26px;top:50%;transform:translate(14px,-50%);width:300px;padding:22px;
+    opacity:0;pointer-events:none;transition:.35s cubic-bezier(.2,.7,.2,1)}
+  #moneyPanel.show{opacity:1;transform:translate(0,-50%);pointer-events:auto}
+  #moneyPanel .big{font-size:32px;font-weight:300;margin:8px 0 18px;letter-spacing:-.02em}
+  #moneyPanel .kv{display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line);font-size:12px}
+  #moneyPanel .kv span:first-child{color:var(--ink-dim)}
+  #moneyPanel .kv span:last-child{font-family:'IBM Plex Mono',monospace}
+  .x{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:8px;border:1px solid var(--line);
+    background:transparent;color:var(--ink-dim);cursor:pointer;font-size:14px;line-height:1}
+  .x:hover{color:var(--ink);background:rgba(255,255,255,.06)}
+
+  /* machine control panel: overlays the same slot as Vault Access / balance,
+     independently centered so it never inflates .side's shared height */
+  #machPanel{position:absolute;top:50%;left:0;width:100%;padding:20px;
+    max-height:calc(100vh - 190px);overflow:auto;
+    opacity:0;transform:translateY(calc(-50% + 16px)) scale(.98);pointer-events:none;
+    transition:opacity .34s cubic-bezier(.2,.7,.2,1),transform .34s cubic-bezier(.2,.7,.2,1)}
+  #machPanel.show{opacity:1;transform:translateY(-50%);pointer-events:auto}
+  #machPanel .head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  #machPanel .head b{font-weight:400;font-size:12px;letter-spacing:.16em;text-transform:uppercase}
+  #machAmt{font-family:'IBM Plex Mono',monospace;font-size:34px;letter-spacing:-.01em;
+    padding:14px 16px;border:1px solid var(--line-strong);border-radius:12px;background:rgba(255,255,255,.04);
+    text-align:right;line-height:1.1;color:var(--ink)}
+  #machAmt.dim{color:var(--ink-faint)}
+  #machNote{font-size:11px;color:var(--ink-dim);margin:9px 0 14px;letter-spacing:.03em;min-height:15px}
+  #machKeys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:14px}
+  #machKeys button{min-height:42px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--ink);
+    border-radius:10px;font-family:'IBM Plex Mono',monospace;font-size:15px;cursor:pointer;transition:.14s}
+  #machKeys button:hover{background:rgba(255,255,255,.09);border-color:var(--line-strong)}
+  #machKeys button:active{transform:scale(.96)}
+  #machKeys button.fn{font-family:'Sora';font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-dim)}
+  #machProg{height:2px;border-radius:2px;background:rgba(255,255,255,.09);overflow:hidden;margin:16px 0 14px}
+  #machProg i{display:block;height:100%;width:0;background:var(--brass);transition:width .12s linear}
+  .machStage{display:none}
+  .machStage.on{display:block}
+  #machCounted{font-family:'IBM Plex Mono',monospace;font-size:40px;letter-spacing:-.02em;margin:4px 0 2px}
+  #machSub{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint)}
+  #machDone{font-size:12px;color:var(--pos);margin:12px 0 14px}
+  #toast{z-index:14;position:fixed;left:50%;bottom:128px;transform:translate(-50%,10px);padding:12px 20px;border-radius:999px;
+    font-size:12px;letter-spacing:.04em;opacity:0;transition:.3s;pointer-events:none;white-space:nowrap}
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+
+  #loader{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:50;transition:opacity .6s}
+  #loader.gone{opacity:0;pointer-events:none}
+  #loader span{font-size:10px;letter-spacing:.3em;color:var(--ink-faint);text-transform:uppercase}
+
+  @media (max-height:700px){
+    #keys button{aspect-ratio:auto;min-height:40px;font-size:15px}
+    #keys{gap:7px;margin-top:12px}
+    #lockCard{padding:18px}
+    #hint{margin-top:10px}
+  }
+  @media (max-width:900px){
+    main{align-items:flex-end;padding:0 14px 8px}
+    .side{width:auto;flex:1}
+    #balanceCard{padding:16px}
+    #balanceVal{font-size:30px}
+    .metaRow{display:none}
+    #lockCard{width:100%;max-width:340px;left:0;right:0;margin:0 auto}
+    #machPanel{width:100%;max-width:340px;left:0;right:0;margin:0 auto}
+    main{flex-direction:column;justify-content:flex-end}
+    .side.right{display:none}
+    footer{padding:2px 10px 14px}
+    #actions{width:100%;overflow-x:auto;justify-content:flex-start;flex-wrap:nowrap;scrollbar-width:none}
+    .btn{padding:11px 13px;font-size:11.5px}
+    .sheet{top:auto;bottom:0;left:0;transform:translateY(14px);width:100%;max-width:none;
+      border-radius:20px 20px 0 0;max-height:88vh;padding:22px 18px 26px}
+    .sheet.show{transform:none;left:0;top:auto}
+    #moneyPanel{left:14px;right:14px;top:auto;bottom:98px;width:auto;transform:translateY(14px)}
+    #moneyPanel.show{transform:none}
+  }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="vignette"></div>
+
+<div id="ui">
+  <header>
+    <div class="brand"><div class="mark"><i></i></div><b>VAULT</b></div>
+    <div class="chip pe" id="statusChip" data-s="locked"><i class="dot"></i><span id="statusText">Locked</span></div>
+  </header>
+
+  <footer>
+    <div class="card pe" id="actions">
+      <button class="btn" data-act="add"><i class="k"></i>Add Money</button>
+      <button class="btn" data-act="deduct"><i class="k"></i>Deduct Money</button>
+      <button class="btn" data-act="count"><i class="k"></i>Count &amp; Add</button>
+      <button class="btn" data-act="recurring"><i class="k"></i>Recurring Savings</button>
+      <button class="btn" data-act="history"><i class="k"></i>Transaction History</button>
+      <button class="btn ghost" data-act="close">Close Vault</button>
+    </div>
+  </footer>
+
+  <main>
+    <div class="side">
+      <div class="card pe" id="lockCard">
+        <div class="lbl">Vault Access</div>
+        <div id="pinDots"><i></i><i></i><i></i><i></i></div>
+        <div id="lockMsg"></div>
+        <div id="keys"></div>
+        <div id="hint">Demo passcode — 4 8 1 5</div>
+      </div>
+      <div class="card pe" id="balanceCard">
+        <div class="lbl">Current Balance</div>
+        <div id="balanceVal" class="mono">₹0</div>
+        <div class="sub">Available in Vault</div>
+        <div class="metaRow">
+          <div><span class="lbl">Auto-save</span><span class="mono" id="metaAuto">—</span></div>
+          <div><span class="lbl">Next deposit</span><span class="mono" id="metaNext">—</span></div>
+        </div>
+      </div>
+      <div class="card pe" id="machPanel">
+        <div class="head"><b id="machTitle">Add Money to Vault</b><button class="x" style="position:static" data-close="mach">×</button></div>
+
+        <div class="machStage on" id="stageEntry">
+          <div id="machAmt" class="dim">₹ 0</div>
+          <div id="machNote">Feed cash into the counter, or enter the amount.</div>
+          <div id="machKeys"></div>
+          <button class="btn primary" id="machStart" style="width:100%;justify-content:center">Enter &amp; Start Counting</button>
+        </div>
+
+        <div class="machStage" id="stageCount">
+          <div class="lbl" id="machState">Counting cash</div>
+          <div id="machCounted">₹0</div>
+          <div id="machSub">of ₹0</div>
+          <div id="machProg"><i></i></div>
+          <div id="machDone" style="display:none"></div>
+          <div class="rowBtns" id="machDoneBtns" style="display:none">
+            <button class="btn ghost" id="machCancel">Cancel</button>
+            <button class="btn primary" id="machDeposit">Add to Vault</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="card" id="moneyPanel">
+  <button class="x" data-close="money">×</button>
+  <div class="lbl">Total Saved</div>
+  <div class="big mono" id="mpTotal">₹0</div>
+  <div class="kv"><span>Total deposits</span><span id="mpDep">—</span></div>
+  <div class="kv"><span>Total withdrawals</span><span id="mpWit">—</span></div>
+  <div class="kv"><span>Monthly recurring</span><span id="mpRec">—</span></div>
+  <div class="kv"><span>Last deposit</span><span id="mpLastD">—</span></div>
+  <div class="kv"><span>Last withdrawal</span><span id="mpLastW">—</span></div>
+  <div class="kv"><span>Current balance</span><span id="mpBal">—</span></div>
+</div>
+
+<div id="scrim"></div>
+
+<!-- Add money -->
+<div class="card sheet" id="sheetAdd">
+  <button class="x" data-close="sheet">×</button>
+  <h2>Add Money</h2>
+  <p class="note">Deposit into your vault.</p>
+  <div class="field">
+    <label class="lbl">Amount</label>
+    <input type="text" inputmode="numeric" id="addAmt" placeholder="₹ 0">
+    <div class="presets" data-for="addAmt">
+      <button data-v="5000">₹5,000</button><button data-v="10000">₹10,000</button>
+      <button data-v="25000">₹25,000</button><button data-v="50000">₹50,000</button>
+    </div>
+  </div>
+  <div class="field text">
+    <label class="lbl">Purpose / note</label>
+    <input type="text" id="addNote" placeholder="e.g. Monthly savings">
+  </div>
+  <div class="ledger">
+    <div><span>Current balance</span><b id="addCur">—</b></div>
+    <div><span>Amount being added</span><b id="addDelta">₹0</b></div>
+    <div class="tot"><span>New balance</span><b id="addNew">—</b></div>
+  </div>
+  <div class="err" id="addErr"></div>
+  <div class="rowBtns">
+    <button class="btn ghost" data-close="sheet">Cancel</button>
+    <button class="btn primary" id="addGo">Add to Vault</button>
+  </div>
+</div>
+
+<!-- Deduct money -->
+<div class="card sheet" id="sheetDeduct">
+  <button class="x" data-close="sheet">×</button>
+  <h2>Deduct Money</h2>
+  <p class="note">Record money spent from your vault.</p>
+  <div class="field">
+    <label class="lbl">Amount</label>
+    <input type="text" inputmode="numeric" id="deductAmt" placeholder="₹ 0">
+  </div>
+  <div class="field">
+    <label class="lbl">Category (optional)</label>
+    <select id="deductCategory">
+      <option value="">No category</option>
+      <option>Groceries</option>
+      <option>New Clothes</option>
+      <option>Food</option>
+      <option>Shopping</option>
+      <option>Bills</option>
+      <option>Travel</option>
+      <option>Entertainment</option>
+      <option>Medical</option>
+      <option>Other</option>
+    </select>
+  </div>
+  <div class="field text">
+    <label class="lbl">Comment (optional)</label>
+    <input type="text" id="deductComment" placeholder="e.g. Weekly groceries">
+  </div>
+  <div class="ledger">
+    <div><span>Current balance</span><b id="deductCur">—</b></div>
+    <div><span>Amount being deducted</span><b id="deductDelta">₹0</b></div>
+    <div class="tot"><span>New balance</span><b id="deductNew">—</b></div>
+  </div>
+  <div class="err" id="deductErr"></div>
+  <div class="rowBtns">
+    <button class="btn ghost" data-close="sheet">Cancel</button>
+    <button class="btn primary" id="deductGo">Deduct from Vault</button>
+  </div>
+</div>
+
+<!-- Recurring -->
+<div class="card sheet" id="sheetRec">
+  <button class="x" data-close="sheet">×</button>
+  <h2>Recurring Savings</h2>
+  <p class="note">Save automatically, every month.</p>
+  <div class="switch">
+    <div><b>Enable Monthly Auto-Save</b><small id="recState">Paused</small></div>
+    <div class="tog" id="recTog"></div>
+  </div>
+  <div class="field">
+    <label class="lbl">Monthly amount</label>
+    <input type="text" inputmode="numeric" id="recAmt" placeholder="₹ 0">
+    <div class="presets" data-for="recAmt">
+      <button data-v="5000">₹5,000/mo</button><button data-v="10000">₹10,000/mo</button>
+      <button data-v="25000">₹25,000/mo</button>
+    </div>
+  </div>
+  <div class="field">
+    <label class="lbl">Deposit schedule</label>
+    <select id="recMode">
+      <option value="salary">Every month on salary day</option>
+      <option value="date">Every month on a fixed date</option>
+    </select>
+  </div>
+  <div class="field" id="recDayWrap">
+    <label class="lbl">Day of month</label>
+    <select id="recDay"></select>
+  </div>
+  <div class="info" id="recInfo">—</div>
+  <div class="rowBtns">
+    <button class="btn ghost" id="recCancel">Cancel Plan</button>
+    <button class="btn primary" id="recSave">Save Plan</button>
+  </div>
+</div>
+
+<!-- History -->
+<div class="card sheet" id="sheetHist">
+  <button class="x" data-close="sheet">×</button>
+  <h2>Transaction History</h2>
+  <p class="note">Every movement of money in this vault.</p>
+  <div class="filters" id="filters">
+    <button class="on" data-f="all">All</button><button data-f="add">Added</button>
+    <button data-f="deduct">Deducted</button><button data-f="recurring">Recurring</button>
+  </div>
+  <div id="txList"></div>
+</div>
+
+<div class="card" id="toast"></div>
+<div id="loader"><span>Calibrating vault</span></div>
+
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const inr = n => '₹' + Math.round(n).toLocaleString('en-IN');
+const clamp = (v,a,b) => Math.min(b,Math.max(a,v));
+const ease = t => t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2;
+const easeOut = t => 1-Math.pow(1-t,3);
+const overshoot = t => 1+2.2*Math.pow(t-1,3)+1.2*Math.pow(t-1,2);
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const fmtDate = d => `${String(d.getDate()).padStart(2,'0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+const ordinal = n => n+(['th','st','nd','rd'][(n%100-20)%10]||['th','st','nd','rd'][n%100]||'th');
+
+const tweens=[];
+function tween(o){
+  return new Promise(res=>{
+    tweens.push({t:0,dur:o.dur??700,delay:o.delay??0,ez:o.ez||ease,up:o.up,done:()=>{o.done&&o.done();res();}});
+  });
+}
+function stepTweens(dt){
+  for(let i=tweens.length-1;i>=0;i--){
+    const w=tweens[i];
+    if(w.delay>0){w.delay-=dt;continue;}
+    w.t=Math.min(1,w.t+dt/w.dur);
+    w.up(w.ez(w.t),w.t);
+    if(w.t>=1){tweens.splice(i,1);w.done();}
+  }
+}
+const wait = ms => new Promise(r=>setTimeout(r,ms));
+
+/* ---------- state ---------- */
+const PIN='4815';
+const NOW=new Date(2026,7,15);
+const state={
+  balance:0,
+  txns:[],
+  recurring:{enabled:false,amount:0,day:1,mode:'salary',nextRunDate:null},
+  open:false,busy:false,filter:'all',accessShown:false
+};
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ---------- backend persistence ----------
+   This page is a static, non-React iframe with no access to the app's
+   server actions, so it talks to the vault ledger over same-origin JSON
+   fetches (cookies carry the logged-in user's session automatically). The
+   backend (src/lib/vault/ledger.ts) is the single source of truth for the
+   balance — it's always derived from vault_transactions, never cached here. */
+function fromServerTxn(t){
+  const signed=t.type==='deduct'?-t.amount:t.amount;
+  return {
+    id:t.id, kind:t.type, category:t.category||null, comment:t.comment||null,
+    label:t.label||t.category||(t.type==='deduct'?'Money Deducted':'Added to Vault'),
+    amount:signed, date:new Date(t.created_at), after:0
+  };
+}
+function loadFromSummary(summary){
+  const asc=[...(summary.transactions||[])].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at));
+  let running=0;
+  const withAfter=asc.map(t=>{
+    const row=fromServerTxn(t);
+    running+=row.amount;
+    row.after=running;
+    return row;
+  });
+  state.txns=withAfter.reverse();
+  state.balance=summary.balance||0;
+}
+async function loadVault(){
+  try{
+    const res=await fetch('/api/vault',{credentials:'same-origin'});
+    if(!res.ok)throw new Error('load failed');
+    loadFromSummary(await res.json());
+  }catch(e){
+    console.error('vault: failed to load balance/history',e);
+  }
+  renderBalance(false);renderTxns();renderAdd();renderDeduct();
+  syncMoney(false);
+}
+async function postTxn(type,amount,extra){
+  extra=extra||{};
+  try{
+    const res=await fetch('/api/vault/transactions',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(Object.assign({type,amount},extra))
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)return {ok:false,error:data.error||'Something went wrong',balance:data.balance};
+    const row=fromServerTxn(data.transaction);
+    row.after=data.balance;
+    state.txns.unshift(row);
+    state.balance=data.balance;
+    vaultChannel&&vaultChannel.postMessage({type:'vault-sync'});
+    return {ok:true,transaction:data.transaction,balance:data.balance};
+  }catch(e){
+    return {ok:false,error:'Network error — please try again.'};
+  }
+}
+function applyRecurringPlan(plan){
+  if(!plan)return;
+  state.recurring={
+    enabled:plan.enabled, amount:plan.amount, day:plan.day_of_month, mode:plan.schedule_mode,
+    nextRunDate:plan.next_run_date?new Date(plan.next_run_date+'T00:00:00'):null
+  };
+}
+async function loadRecurringPlan(){
+  try{
+    const res=await fetch('/api/vault/recurring',{credentials:'same-origin'});
+    if(!res.ok)return;
+    const {plan}=await res.json();
+    applyRecurringPlan(plan);
+  }catch(e){
+    console.error('vault: failed to load recurring plan',e);
+  }
+  renderRecurring();
+}
+async function postRecurringPlan(patch){
+  const next=Object.assign({},state.recurring,patch);
+  try{
+    const res=await fetch('/api/vault/recurring',{
+      method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({amount:next.amount,scheduleMode:next.mode,dayOfMonth:next.day,enabled:next.enabled})
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)return {ok:false,error:data.error||'Something went wrong'};
+    applyRecurringPlan(data.plan);
+    return {ok:true};
+  }catch(e){
+    return {ok:false,error:'Network error — please try again.'};
+  }
+}
+/* Cross-context sync: if a voice deduction lands elsewhere in the app (or
+   another tab), refresh so this open vault reflects it immediately. */
+const vaultChannel=('BroadcastChannel' in window)?new BroadcastChannel('vault-sync'):null;
+if(vaultChannel)vaultChannel.onmessage=e=>{
+  if(e&&e.data&&e.data.type==='vault-sync')refreshFromServer();
+};
+async function refreshFromServer(){
+  try{
+    const res=await fetch('/api/vault',{credentials:'same-origin'});
+    if(!res.ok)return;
+    const prevBalance=state.balance;
+    loadFromSummary(await res.json());
+    renderTxns();
+    if(state.balance!==prevBalance){renderBalance(true);await syncMoney(true);}
+  }catch(e){/* ignore — next successful refresh will catch up */}
+}
+
+/* ---------- three.js scene ---------- */
+const host=$('#stage');
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.05;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+host.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x0e0f11);
+scene.fog=new THREE.Fog(0x0e0f11,7.5,15);
+
+const camera=new THREE.PerspectiveCamera(34,innerWidth/innerHeight,0.1,60);
+camera.position.set(0,0.22,4.4);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;controls.dampingFactor=.075;controls.enablePan=false;
+controls.enableZoom=false;
+controls.minPolarAngle=Math.PI*0.28;controls.maxPolarAngle=Math.PI*0.62;
+controls.minAzimuthAngle=-0.85;controls.maxAzimuthAngle=0.85;
+controls.rotateSpeed=.5;controls.target.set(0,0.05,0);
+
+/* environment map for metal reflections */
+(function env(){
+  const c=document.createElement('canvas');c.width=64;c.height=64;
+  const g=c.getContext('2d');
+  const grd=g.createLinearGradient(0,0,0,64);
+  grd.addColorStop(0,'#3c4149');grd.addColorStop(.42,'#1b1d21');
+  grd.addColorStop(.5,'#0d0e10');grd.addColorStop(1,'#040405');
+  g.fillStyle=grd;g.fillRect(0,0,64,64);
+  g.fillStyle='rgba(255,246,225,.85)';g.fillRect(6,6,20,9);
+  g.fillStyle='rgba(190,215,255,.4)';g.fillRect(40,10,18,6);
+  const tex=new THREE.CanvasTexture(c);
+  tex.mapping=THREE.EquirectangularReflectionMapping;
+  const pm=new THREE.PMREMGenerator(renderer);
+  scene.environment=pm.fromEquirectangular(tex).texture;
+  pm.dispose();tex.dispose();
+})();
+
+/* lights */
+scene.add(new THREE.HemisphereLight(0x9fb0c8,0x0a0a0c,.5));
+const key=new THREE.DirectionalLight(0xfff1dc,2.2);
+key.position.set(2.6,3.4,3.2);key.castShadow=true;
+key.shadow.mapSize.set(2048,2048);
+key.shadow.camera.near=1;key.shadow.camera.far=12;
+key.shadow.camera.left=-3;key.shadow.camera.right=3;
+key.shadow.camera.top=3;key.shadow.camera.bottom=-3;
+key.shadow.bias=-0.0008;key.shadow.normalBias=0.02;
+scene.add(key);
+const rim=new THREE.DirectionalLight(0x7fa6d8,1.5);rim.position.set(-3.2,1.6,-1.2);scene.add(rim);
+const rim2=new THREE.DirectionalLight(0xbcd0ee,.8);rim2.position.set(3.0,.4,-1.6);scene.add(rim2);
+const fill=new THREE.DirectionalLight(0xffffff,.7);fill.position.set(-1.4,.6,3.4);scene.add(fill);
+const inner=new THREE.PointLight(0xffd9a4,0,2.6,2);inner.position.set(0,.55,.14);scene.add(inner);
+
+/* floor */
+const floor=new THREE.Mesh(
+  new THREE.CircleGeometry(9,64),
+  new THREE.MeshStandardMaterial({color:0x14161a,roughness:.62,metalness:.35})
+);
+floor.rotation.x=-Math.PI/2;floor.position.y=-2.34;floor.receiveShadow=true;
+scene.add(floor);
+
+/* materials */
+const M={
+  steel:new THREE.MeshStandardMaterial({color:0x9ba1a8,metalness:1,roughness:.34}),
+  steelDark:new THREE.MeshStandardMaterial({color:0x4a4e55,metalness:.95,roughness:.5}),
+  shell:new THREE.MeshStandardMaterial({color:0x2b2e33,metalness:.9,roughness:.55}),
+  cavity:new THREE.MeshStandardMaterial({color:0x1a1c20,metalness:.6,roughness:.8}),
+  brass:new THREE.MeshStandardMaterial({color:0xc7a15e,metalness:1,roughness:.24}),
+  glass:new THREE.MeshPhysicalMaterial({color:0x0a0c10,metalness:0,roughness:.08,transparent:true,opacity:.72,
+    clearcoat:1,clearcoatRoughness:.05}),
+  note:new THREE.MeshStandardMaterial({color:0x6f8f63,metalness:.05,roughness:.8}),
+  band:new THREE.MeshStandardMaterial({color:0xd9cdb0,metalness:.1,roughness:.6})
+};
+for(const k in M) M[k].name=k;
+
+function roundedRect(w,h,r){
+  const s=new THREE.Shape(),x=-w/2,y=-h/2;
+  s.moveTo(x+r,y);s.lineTo(x+w-r,y);s.quadraticCurveTo(x+w,y,x+w,y+r);
+  s.lineTo(x+w,y+h-r);s.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  s.lineTo(x+r,y+h);s.quadraticCurveTo(x,y+h,x,y+h-r);
+  s.lineTo(x,y+r);s.quadraticCurveTo(x,y,x+r,y);
+  return s;
+}
+function rBox(w,h,d,r=.05,bev=.014){
+  const g=new THREE.ExtrudeGeometry(roundedRect(w,h,r),
+    {depth:Math.max(.001,d-bev*2),bevelEnabled:true,bevelThickness:bev,bevelSize:bev,bevelSegments:3,curveSegments:10});
+  g.center();g.computeVertexNormals();return g;
+}
+function mesh(geo,mat,name){
+  const m=new THREE.Mesh(geo,mat);m.name=name;m.castShadow=true;m.receiveShadow=true;return m;
+}
+
+/* ---------- table ---------- */
+const TOP=-1.06;
+const Mw={
+  wood:new THREE.MeshStandardMaterial({color:0x4a382c,metalness:.12,roughness:.5}),
+  woodDark:new THREE.MeshStandardMaterial({color:0x2c2119,metalness:.1,roughness:.62})
+};
+Mw.wood.name='tableWood';Mw.woodDark.name='tableFrame';
+const table=new THREE.Group();table.name='table';scene.add(table);
+const slab=mesh(rBox(6.4,.12,2.0,.03,.012),Mw.wood,'tableTop');
+slab.position.set(.55,TOP-.06,.02);table.add(slab);
+const apron=mesh(rBox(6.1,.11,1.76,.02,.008),Mw.woodDark,'tableApron');
+apron.position.set(.55,TOP-.17,.02);table.add(apron);
+[[-2.35,-.72],[3.45,-.72],[-2.35,.76],[3.45,.76]].forEach(p=>{
+  const leg=mesh(rBox(.16,1.2,.16,.03,.008),Mw.woodDark,'tableLeg');
+  leg.position.set(p[0],TOP-.78,p[1]);table.add(leg);
+});
+key.shadow.camera.left=-5;key.shadow.camera.right=5;
+key.shadow.camera.top=4;key.shadow.camera.bottom=-4;key.shadow.camera.far=16;
+key.shadow.camera.updateProjectionMatrix();
+
+/* ---------- vault ---------- */
+const vault=new THREE.Group();vault.name='vault';scene.add(vault);
+const W=1.72,H=1.86,D=.82,T=.17;
+const CW=W-T*2, CH=H-T*2, CD=D-T;
+
+// shell: 4 walls + back
+const walls=new THREE.Group();walls.name='shell';vault.add(walls);
+const top=mesh(rBox(W,T,D,.05),M.shell,'shellTop');top.position.y=H/2-T/2;walls.add(top);
+const bot=mesh(rBox(W,T,D,.05),M.shell,'shellBottom');bot.position.y=-H/2+T/2;walls.add(bot);
+const lft=mesh(rBox(T,CH,D,.04),M.shell,'shellLeft');lft.position.x=-W/2+T/2;walls.add(lft);
+const rgt=mesh(rBox(T,CH,D,.04),M.shell,'shellRight');rgt.position.x=W/2-T/2;walls.add(rgt);
+const back=mesh(rBox(CW,CH,T*.7,.03),M.cavity,'shellBack');back.position.z=-D/2+T*.35;walls.add(back);
+// interior liner
+const liner=mesh(new THREE.BoxGeometry(CW-.004,CH-.004,CD-.004),M.cavity,'liner');
+liner.material=M.cavity;liner.position.z=-T/2+.02;
+liner.geometry=new THREE.BoxGeometry(CW,CH,CD);
+liner.scale.set(1,1,1);
+liner.material.side=THREE.BackSide;
+walls.add(liner);
+// feet
+[-1,1].forEach(sx=>[-1,1].forEach(sz=>{
+  const f=mesh(new THREE.CylinderGeometry(.075,.095,.12,24),M.steelDark,'foot');
+  f.position.set(sx*(W/2-.2),-H/2-.06,sz*(D/2-.19));walls.add(f);
+}));
+const lightBar=mesh(new THREE.BoxGeometry(CW-.3,.02,.05),new THREE.MeshStandardMaterial({color:0xfff0d6,emissive:0xffd9a4,emissiveIntensity:0}),'lightBar');
+lightBar.castShadow=false;lightBar.position.set(0,CH/2-.05,.16);walls.add(lightBar);
+// shelves
+const SHELF_Y=[-CH/2+.05,-CH/2+.52,-CH/2+.99];
+SHELF_Y.slice(1).forEach((y,i)=>{
+  const s=mesh(rBox(CW-.02,.032,CD-.06,.012),M.steelDark,'shelf'+i);
+  s.position.set(0,y-.02,-T/2+.01);walls.add(s);
+});
+// door frame lip
+const lip=mesh(new THREE.TorusGeometry(0,0,3,3),M.steel,'x');lip.visible=false;
+
+/* door */
+const hinge=new THREE.Group();hinge.name='hinge';
+hinge.position.set(-W/2+.06,0,D/2-.02);vault.add(hinge);
+const door=new THREE.Group();door.name='door';
+door.position.set(W/2-.06-.02,0,.055);hinge.add(door);
+const DW=W-.1,DH=H-.1;
+door.add(mesh(rBox(DW,DH,.14,.06,.018),M.steel,'doorPlate'));
+const trim=mesh(rBox(DW-.1,DH-.1,.155,.05,.012),M.steelDark,'doorInset');
+trim.position.z=.004;door.add(trim);
+
+// concentric dial assembly
+const dialGrp=new THREE.Group();dialGrp.name='dialAssembly';dialGrp.position.set(.18,-.02,.082);door.add(dialGrp);
+const ringOuter=mesh(new THREE.TorusGeometry(.34,.035,20,72),M.steel,'dialRingOuter');dialGrp.add(ringOuter);
+const ringInner=mesh(new THREE.TorusGeometry(.235,.022,18,64),M.brass,'dialRingInner');
+ringInner.position.z=.01;dialGrp.add(ringInner);
+const spin=new THREE.Group();spin.name='dial';dialGrp.add(spin);
+const hub=mesh(new THREE.CylinderGeometry(.135,.155,.085,48),M.steel,'dialHub');
+hub.rotation.x=Math.PI/2;hub.position.z=.045;spin.add(hub);
+const hubFace=mesh(new THREE.CylinderGeometry(.1,.1,.09,48),M.brass,'dialFace');
+hubFace.rotation.x=Math.PI/2;hubFace.position.z=.052;spin.add(hubFace);
+for(let i=0;i<3;i++){
+  const sp=mesh(rBox(.52,.055,.045,.02,.008),M.steel,'spoke'+i);
+  sp.position.z=.086;sp.rotation.z=i*Math.PI/3;spin.add(sp);
+  const cap=mesh(new THREE.SphereGeometry(.038,24,16),M.brass,'spokeCap'+i);
+  cap.position.set(Math.cos(i*Math.PI/3)*.26,Math.sin(i*Math.PI/3)*.26,.086);spin.add(cap);
+}
+// notch marks
+for(let i=0;i<24;i++){
+  const t=mesh(new THREE.BoxGeometry(.012,.03,.01),M.steelDark,'tick');
+  const a=i/24*Math.PI*2;
+  t.position.set(Math.cos(a)*.3,Math.sin(a)*.3,.035);t.rotation.z=a;dialGrp.add(t);
+}
+// handle
+const handle=new THREE.Group();handle.name='handle';handle.position.set(.18,-.02,.14);door.add(handle);
+const bar=mesh(new THREE.CylinderGeometry(.032,.032,.62,28),M.brass,'handleBar');
+bar.rotation.z=Math.PI/2.2;handle.add(bar);
+[-1,1].forEach(s=>{
+  const kn=mesh(new THREE.SphereGeometry(.052,26,18),M.brass,'handleKnob');
+  kn.position.set(Math.cos(Math.PI/2.2-Math.PI/2)*.31*s,Math.sin(Math.PI/2.2-Math.PI/2)*.31*s,0);
+  handle.add(kn);
+});
+
+// keypad panel on door
+const pad=new THREE.Group();pad.name='keypad';pad.position.set(-.52,.36,.078);door.add(pad);
+const padBase=mesh(rBox(.4,.62,.05,.03,.008),M.steelDark,'keypadBase');pad.add(padBase);
+const screenCv=document.createElement('canvas');screenCv.width=512;screenCv.height=192;
+const screenTex=new THREE.CanvasTexture(screenCv);screenTex.colorSpace=THREE.SRGBColorSpace;
+const screenMat=new THREE.MeshStandardMaterial({map:screenTex,emissiveMap:screenTex,
+  emissive:0xffffff,emissiveIntensity:1.15,roughness:.25,metalness:0});
+screenMat.name='screen';
+const screen=mesh(new THREE.PlaneGeometry(.32,.12),screenMat,'screenPanel');
+screen.position.set(0,.21,.029);screen.castShadow=false;pad.add(screen);
+const screenGlass=mesh(new THREE.PlaneGeometry(.34,.14),M.glass,'screenGlass');
+screenGlass.position.set(0,.21,.031);screenGlass.castShadow=false;pad.add(screenGlass);
+for(let r=0;r<4;r++)for(let c=0;c<3;c++){
+  const b=mesh(rBox(.082,.062,.022,.014,.005),M.steel,'key'+(r*3+c));
+  b.position.set((c-1)*.098,.08-r*.082,.026);pad.add(b);
+}
+// ready-state glow border: a soft green outline signalling the keypad is live
+const padGlowCv=document.createElement('canvas');padGlowCv.width=256;padGlowCv.height=384;
+(function(){
+  const g=padGlowCv.getContext('2d'),w=padGlowCv.width,h=padGlowCv.height,rad=26,m=12;
+  function rr(x,y,ww,hh,r){
+    g.beginPath();g.moveTo(x+r,y);g.arcTo(x+ww,y,x+ww,y+hh,r);g.arcTo(x+ww,y+hh,x,y+hh,r);
+    g.arcTo(x,y+hh,x,y,r);g.arcTo(x,y,x+ww,y,r);g.closePath();
+  }
+  g.clearRect(0,0,w,h);
+  g.lineWidth=7;g.strokeStyle='rgba(84,242,163,.95)';
+  g.shadowColor='rgba(60,230,150,.9)';g.shadowBlur=24;
+  rr(m,m,w-m*2,h-m*2,rad);g.stroke();
+  g.shadowBlur=0;g.lineWidth=1.5;g.strokeStyle='rgba(206,255,228,.9)';
+  rr(m,m,w-m*2,h-m*2,rad);g.stroke();
+})();
+const padGlowTex=new THREE.CanvasTexture(padGlowCv);padGlowTex.colorSpace=THREE.SRGBColorSpace;
+const padGlowMat=new THREE.MeshBasicMaterial({map:padGlowTex,transparent:true,opacity:.6,
+  blending:THREE.AdditiveBlending,depthWrite:false});
+padGlowMat.name='padGlow';
+const padGlow=mesh(new THREE.PlaneGeometry(.46,.7),padGlowMat,'padGlowFrame');
+padGlow.position.set(0,0,.033);padGlow.castShadow=false;padGlow.receiveShadow=false;pad.add(padGlow);
+let padFlash=0;
+function animPadGlow(now,dt){
+  padFlash*=Math.pow(.003,(dt||16)/1000);
+  padGlowMat.opacity=state.open?0:(.5+Math.sin(now/900)*.14)+(padHot?.22:0)+padFlash;
+}
+function drawScreen(text,tone){
+  const g=screenCv.getContext('2d');
+  g.fillStyle='#07090c';g.fillRect(0,0,512,192);
+  g.fillStyle=tone==='ok'?'#7ee0a8':tone==='warn'?'#e0b273':'#e07a63';
+  g.font='500 84px "IBM Plex Mono", monospace';g.textAlign='center';g.textBaseline='middle';
+  g.fillText(text,256,104);
+  g.globalAlpha=.35;g.fillRect(0,0,512,2);g.globalAlpha=1;
+  screenTex.needsUpdate=true;
+  screenMat.emissive.set(tone==='ok'?0x8fffc0:tone==='warn'?0xffd9a0:0xff9c85);
+}
+drawScreen('LOCKED','bad');
+
+// bolts (retract when unlocked)
+const bolts=[];
+[-1,1].forEach(sy=>[0,1,2].forEach(i=>{
+  const b=mesh(new THREE.CylinderGeometry(.05,.05,.22,24),M.brass,'bolt');
+  b.rotation.z=Math.PI/2;
+  b.position.set(DW/2-.02,sy*(.15+i*.3)*(i===0?0:1),0);
+  if(i===0&&sy<0)return;
+  b.userData.home=b.position.x;
+  door.add(b);bolts.push(b);
+}));
+const boltL=[];
+[-.55,0,.55].forEach(y=>{
+  const b=mesh(new THREE.CylinderGeometry(.045,.045,.2,24),M.brass,'boltLeft');
+  b.rotation.z=Math.PI/2;b.position.set(-DW/2+.02,y,0);b.userData.home=b.position.x;
+  door.add(b);boltL.push(b);
+});
+// hinge barrels
+[-.62,0,.62].forEach(y=>{
+  const h=mesh(new THREE.CylinderGeometry(.062,.062,.2,24),M.steelDark,'hingeBarrel');
+  h.position.set(-W/2+.04,y,D/2+.02);vault.add(h);
+});
+
+vault.position.y=H/2-1.0;
+
+/* ---------- money ---------- */
+const moneyGrp=new THREE.Group();moneyGrp.name='money';walls.add(moneyGrp);
+const UNIT=12500, MAXB=24;
+const slots=[];
+const FLOOR_Y=-H/2+T;
+SHELF_Y.forEach((y,si)=>{
+  const base=(si===0?FLOOR_Y:y-.004)+.0425;
+  [.13,-.13].forEach((z,zi)=>{
+    [-.46,-.155,.155,.46].forEach(x=>slots.push({x:x+(zi?.02:-.02),y:base,z:z-T/2}));
+  });
+});
+const bundles=[];
+function makeBundle(){
+  const g=new THREE.Group();g.name='bundle';
+  const note=mesh(new THREE.BoxGeometry(.245,.085,.15),M.note.clone(),'notes');
+  note.material.color.offsetHSL(0,0,(Math.random()-.5)*.06);
+  g.add(note);
+  const band=mesh(new THREE.BoxGeometry(.055,.089,.154),M.band.clone(),'band');
+  band.position.x=-.02;g.add(band);
+  g.userData.mats=[note.material,band.material];
+  return g;
+}
+function bundleCount(bal){ return bal<=0?0:clamp(Math.round(bal/UNIT),1,MAXB); }
+async function syncMoney(animate=true){
+  const want=bundleCount(state.balance);
+  const tasks=[];
+  while(bundles.length<want){
+    const i=bundles.length,s=slots[i%slots.length],b=makeBundle();
+    b.position.set(s.x,animate? s.y+1.9 : s.y, s.z);
+    b.rotation.y=(Math.random()-.5)*.24;
+    b.rotation.z=(Math.random()-.5)*.05;
+    moneyGrp.add(b);bundles.push(b);
+    if(animate){
+      const from=b.position.y,to=s.y,d=i*45;
+      tasks.push(tween({dur:760,delay:d,ez:overshoot,up:t=>{b.position.y=from+(to-from)*t;}}));
+    }
+  }
+  while(bundles.length>want){
+    const b=bundles.pop();
+    if(animate){
+      const from=b.position.y;
+      tasks.push(tween({dur:620,ez:easeOut,up:t=>{
+        b.position.y=from+t*1.6;b.rotation.z+=.02;
+        b.userData.mats.forEach(m=>{m.transparent=true;m.opacity=1-t;});
+      },done:()=>moneyGrp.remove(b)}));
+    } else moneyGrp.remove(b);
+  }
+  await Promise.all(tasks);
+}
+syncMoney(false);
+moneyGrp.visible=false;
+
+const tableCash=new THREE.Group();tableCash.name='tableCash';tableCash.position.x=.18;scene.add(tableCash);
+[[2.16,.10,.42,0],[2.44,.42,-.86,0],[2.18,-.30,.18,0],[2.56,-.02,1.34,0],
+ [2.38,.66,-.36,1],[2.62,.28,.86,0],[2.20,.48,-.15,1],[2.50,.58,.34,0]].forEach(([x,z,rot,stack])=>{
+  const b=makeBundle();
+  b.position.set(x,TOP+.0425,z);
+  b.rotation.set(0,rot,(Math.random()-.5)*.04);
+  tableCash.add(b);
+  if(stack){
+    const b2=makeBundle();
+    b2.position.set(x+.02,TOP+.128,z-.01);
+    b2.rotation.set(0,rot+.28,(Math.random()-.5)*.05);
+    tableCash.add(b2);
+  }
+});
+const leaner=makeBundle();
+leaner.position.set(2.30,TOP+.07,.72);leaner.rotation.set(.32,-.5,.1);
+tableCash.add(leaner);
+
+/* ---------- money counting machine (bank note counter) ---------- */
+const MX=1.72, FLOOR=TOP;
+const machine=new THREE.Group();machine.name='counter';
+machine.position.set(MX,FLOOR,.26);machine.rotation.y=-0.42;scene.add(machine);
+const machBody=new THREE.Group();machine.add(machBody);
+
+const Mm={
+  shellA:new THREE.MeshStandardMaterial({color:0x6e737a,metalness:.35,roughness:.52}),
+  shellB:new THREE.MeshStandardMaterial({color:0x585d64,metalness:.3,roughness:.6}),
+  bezel:new THREE.MeshStandardMaterial({color:0x14161a,metalness:.35,roughness:.55}),
+  drum:new THREE.MeshStandardMaterial({color:0xc6cbd1,metalness:1,roughness:.22}),
+  rubber:new THREE.MeshStandardMaterial({color:0x1b1d21,metalness:.15,roughness:.92}),
+  keyBlue:new THREE.MeshStandardMaterial({color:0xa8c8d8,metalness:.1,roughness:.45}),
+  keyRed:new THREE.MeshStandardMaterial({color:0xcf6a4c,metalness:.1,roughness:.45})
+};
+for(const k in Mm) Mm[k].name='mach_'+k;
+
+const BW=1.02, BD=.74;
+
+/* base + feet */
+[[-.44,-.28],[.44,-.28],[-.44,.28],[.44,.28]].forEach(p=>{
+  const f=mesh(new THREE.CylinderGeometry(.036,.04,.026,18),Mm.rubber,'counterFoot');
+  f.position.set(p[0],.013,p[1]);machBody.add(f);
+});
+const plinth=mesh(rBox(BW,.07,BD,.025,.008),Mm.shellB,'counterPlinth');
+plinth.position.y=.062;machBody.add(plinth);
+
+/* lower body built as panels so the front throat stays open */
+const bodyY=.30, bodyTop=.10+bodyY;
+const backWall=mesh(rBox(BW-.02,bodyY,.13,.03,.008),Mm.shellA,'bodyBack');
+backWall.position.set(0,.10+bodyY/2,-BD/2+.07);machBody.add(backWall);
+[-1,1].forEach(s=>{
+  const side=mesh(rBox(.17,bodyY,BD,.045,.01),Mm.shellA,'bodySide');
+  side.position.set(s*(BW/2-.085),.10+bodyY/2,0);machBody.add(side);
+});
+const bodyFloor=mesh(rBox(BW-.02,.06,BD-.04,.02,.008),Mm.shellB,'bodyFloor');
+bodyFloor.position.set(0,.125,0);machBody.add(bodyFloor);
+const lintel=mesh(rBox(BW-.34,.055,.5,.02,.008),Mm.shellB,'throatLintel');
+lintel.position.set(0,bodyTop-.03,.03);machBody.add(lintel);
+
+/* throat internals: ribbed feed shaft, two drums, centre divider */
+const chamber=new THREE.Group();machBody.add(chamber);
+const shaftWrap=new THREE.Group();shaftWrap.rotation.z=Math.PI/2;
+shaftWrap.position.set(0,bodyTop-.09,.06);chamber.add(shaftWrap);
+const shaft=mesh(new THREE.CylinderGeometry(.024,.024,.6,20),Mm.drum,'feedShaft');
+shaftWrap.add(shaft);
+const rollers=[];rollers.push(shaft);
+for(let i=0;i<9;i++){
+  const s=mesh(new THREE.CylinderGeometry(.036,.036,.028,20),Mm.rubber,'shaftSpline'+i);
+  s.position.y=-.2+i*.05;shaft.add(s);
+}
+[-1,1].forEach((s,i)=>{
+  const wrap=new THREE.Group();wrap.rotation.z=Math.PI/2;
+  wrap.position.set(s*.215,.30,.03);chamber.add(wrap);
+  const d=mesh(new THREE.CylinderGeometry(.108,.108,.28,40),Mm.drum,'drum'+i);
+  wrap.add(d);rollers.push(d);
+  for(let r=0;r<5;r++){
+    const rg=mesh(new THREE.TorusGeometry(.109,.005,8,40),Mm.rubber,'drumRib'+i+'_'+r);
+    rg.rotation.x=Math.PI/2;rg.position.y=-.1+r*.05;d.add(rg);
+  }
+});
+const divider=mesh(rBox(.085,.30,.16,.02,.006),Mm.shellB,'centreDivider');
+divider.position.set(0,.28,.04);chamber.add(divider);
+const led=mesh(new THREE.SphereGeometry(.016,18,12),
+  new THREE.MeshStandardMaterial({color:0xff5a4a,emissive:0xff3b28,emissiveIntensity:1.4,roughness:.4}),'sensorLed');
+led.castShadow=false;led.position.set(0,.26,.125);chamber.add(led);
+
+/* front stacker pocket: scalloped ramp with two V notches */
+const ramp=mesh(rBox(.78,.07,.3,.02,.008),Mm.shellB,'stackerRamp');
+ramp.position.set(0,.16,.24);ramp.rotation.x=-.22;machBody.add(ramp);
+const lipPlate=mesh(rBox(.8,.15,.05,.02,.008),Mm.shellA,'stackerLip');
+lipPlate.position.set(0,.2,.355);machBody.add(lipPlate);
+[-.26,0,.26].forEach((x,i)=>{
+  const fin=mesh(rBox(.12,.2,.09,.035,.01),Mm.shellA,'stackerFin'+i);
+  fin.position.set(x,.245,.33);machBody.add(fin);
+});
+const countStack=mesh(new THREE.BoxGeometry(.6,.2,.035),M.note.clone(),'countedStack');
+countStack.geometry.translate(0,.1,0);
+countStack.position.set(0,.19,.245);countStack.rotation.x=-.22;
+countStack.scale.y=.001;machBody.add(countStack);
+
+/* slanted control panel */
+const face=new THREE.Group();face.position.set(0,bodyTop+.10,.055);face.rotation.x=-.44;machBody.add(face);
+face.add(mesh(rBox(BW,.3,.06,.035,.01),Mm.shellA,'panelPlate'));
+const bezel=mesh(rBox(.66,.17,.03,.015,.006),Mm.bezel,'panelBezel');
+bezel.position.set(-.13,.02,.035);face.add(bezel);
+const dispCv=document.createElement('canvas');dispCv.width=1024;dispCv.height=224;
+const dispTex=new THREE.CanvasTexture(dispCv);dispTex.colorSpace=THREE.SRGBColorSpace;
+const dispMat=new THREE.MeshStandardMaterial({map:dispTex,emissiveMap:dispTex,emissive:0xffffff,
+  emissiveIntensity:.5,roughness:.3,metalness:0});dispMat.name='mach_display';
+const disp=mesh(new THREE.PlaneGeometry(.62,.155),dispMat,'counterDisplay');
+disp.castShadow=false;disp.position.set(-.13,.02,.052);face.add(disp);
+const dispGlass=mesh(new THREE.PlaneGeometry(.64,.17),new THREE.MeshPhysicalMaterial({
+  color:0x05070a,metalness:0,roughness:.06,transparent:true,opacity:.28,clearcoat:1}),'counterDisplayGlass');
+dispGlass.castShadow=false;dispGlass.position.set(-.13,.02,.056);face.add(dispGlass);
+const keys=[];
+[0,1].forEach(row=>[0,1,2].forEach(col=>{
+  const k=mesh(rBox(.062,.052,.024,.01,.004),Mm.keyBlue,'panelKey'+row+col);
+  k.position.set(.28+col*.072,.055-row*.062,.04);face.add(k);keys.push(k);
+}));
+const goBtn=mesh(rBox(.2,.062,.026,.012,.004),Mm.keyRed,'counterStartButton');
+goBtn.position.set(.352,-.069,.04);face.add(goBtn);goBtn.userData.home=goBtn.position.z;
+
+/* rear posts + hopper */
+[-1,1].forEach(s=>{
+  const post=mesh(rBox(.13,.22,.24,.04,.01),Mm.shellA,'hopperPost');
+  post.position.set(s*(BW/2-.075),bodyTop+.11,-BD/2+.14);machBody.add(post);
+});
+const hop=new THREE.Group();hop.position.set(0,bodyTop+.16,-BD/2+.18);hop.rotation.x=.34;machBody.add(hop);
+const hopFloor=mesh(rBox(.66,.03,.3,.015,.006),Mm.shellB,'hopperFloor');hop.add(hopFloor);
+const hopBack=mesh(rBox(.66,.17,.03,.015,.006),Mm.shellA,'hopperBack');
+hopBack.position.set(0,.08,-.145);hop.add(hopBack);
+[-1,1].forEach(s=>{
+  const g=mesh(rBox(.03,.1,.28,.01,.005),Mm.shellB,'hopperGuide');
+  g.position.set(s*.33,.055,.01);hop.add(g);
+});
+const feedStack=mesh(new THREE.BoxGeometry(.6,.26,.05),M.note.clone(),'feedStack');
+feedStack.geometry.translate(0,.13,0);
+feedStack.position.set(0,.02,-.09);hop.add(feedStack);
+
+/* side vents */
+for(let i=0;i<7;i++){
+  const v=mesh(new THREE.BoxGeometry(.012,.11,.008),Mm.bezel,'vent');
+  v.position.set(-BW/2+.005,.24,-.16+i*.046);machBody.add(v);
+}
+
+/* travelling notes */
+const notePath=new THREE.CatmullRomCurve3([
+  new THREE.Vector3(0,bodyTop+.18,-.20),new THREE.Vector3(0,bodyTop+.04,-.09),
+  new THREE.Vector3(0,.34,.02),new THREE.Vector3(0,.26,.14),new THREE.Vector3(0,.21,.23)
+]);
+const noteMat=new THREE.MeshStandardMaterial({color:0x84a173,metalness:.04,roughness:.7});
+noteMat.name='mach_note';
+const flyNotes=[];
+for(let i=0;i<8;i++){
+  const n=mesh(new THREE.BoxGeometry(.58,.006,.145,6,1,2),noteMat,'note'+i);
+  n.visible=false;machBody.add(n);flyNotes.push(n);
+}
+const dispLight=new THREE.PointLight(0xffb070,0,.75,2);
+dispLight.position.set(0,bodyTop+.2,.3);machine.add(dispLight);
+
+function drawDisp(label,value,tone){
+  const g=dispCv.getContext('2d');
+  g.fillStyle='#0a0c0f';g.fillRect(0,0,1024,224);
+  // main LED readout
+  g.fillStyle='#05070a';g.fillRect(26,26,470,120);
+  g.fillStyle='#08331f';g.fillRect(516,26,240,120);
+  g.textBaseline='middle';
+  const fs=value.length>8?62:value.length>6?74:86;
+  g.font='500 '+fs+'px "IBM Plex Mono", monospace';
+  g.textAlign='right';
+  g.fillStyle=tone==='ok'?'#7dffb0':'#ff8a3d';
+  g.fillText(value,478,88);
+  g.fillStyle=tone==='run'?'#5fe89a':'#1c6b46';
+  g.font='500 64px "IBM Plex Mono", monospace';
+  g.fillText(tone==='idle'?'---':String(mach.notes||0).padStart(3,'0'),740,90);
+  g.textAlign='left';
+  g.font='400 30px Sora, sans-serif';
+  g.fillStyle='rgba(170,190,205,.6)';
+  g.fillText(label,30,186);
+  g.fillStyle='rgba(170,190,205,.35)';
+  g.font='400 26px Sora, sans-serif';
+  g.fillText('NOTES',548,186);
+  g.fillStyle=tone==='run'?'#ffd15c':'rgba(255,209,92,.25)';
+  g.beginPath();g.arc(800,88,16,0,7);g.fill();
+  g.fillStyle=tone==='ok'?'#7dffb0':'rgba(125,255,176,.2)';
+  g.beginPath();g.arc(860,88,16,0,7);g.fill();
+  dispTex.needsUpdate=true;
+  dispMat.emissive.set(tone==='ok'?0xbfffd8:tone==='run'?0xffd0a8:0x9fb4c6);
+}
+
+const mach={running:false,el:0,dur:0,target:0,counted:0,notes:0,phase:'idle',hover:0,spin:0};
+drawDisp('STANDBY','0','idle');
+
+/* hover / click money */
+const ray=new THREE.Raycaster(),ptr=new THREE.Vector2(-9,-9);
+let hovered=null,padHot=false;
+renderer.domElement.addEventListener('pointermove',e=>{
+  ptr.x=(e.clientX/innerWidth)*2-1;ptr.y=-(e.clientY/innerHeight)*2+1;
+});
+renderer.domElement.addEventListener('pointerleave',()=>{ptr.set(-9,-9);});
+renderer.domElement.addEventListener('click',e=>{
+  if(state.busy)return;
+  if(!state.open){
+    if(state.accessShown)return;
+    const p=new THREE.Vector2((e.clientX/innerWidth)*2-1,-(e.clientY/innerHeight)*2+1);
+    ray.setFromCamera(p,camera);
+    if(ray.intersectObject(pad,true).length) revealAccessPanel();
+    return;
+  }
+  if(machHot) focusMachine();
+  else if(hovered) openMoneyPanel();
+});
+let machHot=false;
+function pickScene(){
+  if(state.busy){setHover(null);setMachHot(false);padHot=false;return;}
+  if(!state.open){
+    setHover(null);setMachHot(false);
+    if(state.accessShown){padHot=false;renderer.domElement.style.cursor='grab';return;}
+    ray.setFromCamera(ptr,camera);
+    padHot=!!ray.intersectObject(pad,true)[0];
+    renderer.domElement.style.cursor=padHot?'pointer':'grab';
+    return;
+  }
+  ray.setFromCamera(ptr,camera);
+  const hm=ray.intersectObject(machine,true)[0];
+  const hb=moneyGrp.visible? ray.intersectObjects(bundles,true)[0] : null;
+  const machFirst=hm&&(!hb||hm.distance<hb.distance);
+  setMachHot(!!machFirst);
+  setHover(!machFirst&&hb? hb.object.parent : null);
+  renderer.domElement.style.cursor=(machFirst||hovered)?'pointer':'grab';
+}
+function setMachHot(v){
+  if(machHot===v)return;machHot=v;
+  dispLight.intensity=v?1.6:(mach.phase==='idle'?0:1.1);
+  if(!mach.running&&mach.phase==='idle')drawDisp(v?'READY':'STANDBY','₹0',v?'run':'idle');
+}
+function setHover(b){
+  if(hovered===b)return;
+  if(hovered) hovered.userData.mats.forEach(m=>{m.emissive.setHex(0x000000);m.emissiveIntensity=0;});
+  hovered=b;
+  if(b) b.userData.mats.forEach(m=>{m.emissive.setHex(0x6a5a2a);m.emissiveIntensity=.9;});
+}
+
+/* ---------- camera moves ---------- */
+function camTo(pos,tgt,dur=1400){
+  const p0=camera.position.clone(),t0=controls.target.clone();
+  const p1=new THREE.Vector3(...pos),t1=new THREE.Vector3(...tgt);
+  return tween({dur,up:t=>{
+    camera.position.lerpVectors(p0,p1,t);
+    controls.target.lerpVectors(t0,t1,t);
+  }});
+}
+function fitDist(mul=1){
+  const vFov=THREE.MathUtils.degToRad(camera.fov);
+  const dH=(H*1.42/2)/Math.tan(vFov/2);
+  const dW=(W*1.5/2)/Math.tan(vFov/2)/camera.aspect;
+  return Math.max(dH,dW)*mul;
+}
+const CAM_LOCKED=()=>[[.34,.56,fitDist(1.42)],[.20,-.26,0]];
+const CAM_OPEN=()=>CAM_LOCKED();
+const CAM_MACH=()=>CAM_LOCKED();
+
+/* ---------- UI ---------- */
+const statusChip=$('#statusChip'),statusText=$('#statusText');
+function setStatus(t,s){statusText.textContent=t;statusChip.dataset.s=s;}
+function toast(msg,tone){
+  const el=$('#toast');el.textContent=msg;
+  el.style.color=tone==='neg'?'var(--neg)':tone==='pos'?'var(--pos)':'var(--ink)';
+  el.classList.add('show');clearTimeout(el._t);
+  el._t=setTimeout(()=>el.classList.remove('show'),2200);
+}
+let shownBal=state.balance;
+function renderBalance(animate=true){
+  const from=shownBal,to=state.balance;
+  if(!animate){shownBal=to;$('#balanceVal').textContent=inr(to);return;}
+  tween({dur:900,ez:easeOut,up:t=>{
+    shownBal=from+(to-from)*t;$('#balanceVal').textContent=inr(shownBal);
+  }});
+}
+function nextDeposit(){
+  if(state.recurring.nextRunDate) return state.recurring.nextRunDate;
+  const r=state.recurring;
+  const d=new Date(NOW.getFullYear(),NOW.getMonth()+1,r.mode==='salary'?1:r.day);
+  return d;
+}
+function renderRecurring(){
+  const r=state.recurring;
+  $('#metaAuto').textContent=r.enabled?inr(r.amount):'Paused';
+  $('#metaNext').textContent=r.enabled?fmtDate(nextDeposit()).slice(0,6):'—';
+  $('#recTog').classList.toggle('on',r.enabled);
+  $('#recState').textContent=r.enabled?'Active':'Paused';
+  $('#recAmt').value=r.amount?inr(r.amount):'';
+  $('#recMode').value=r.mode;
+  $('#recDay').value=String(r.day);
+  $('#recDayWrap').style.display=r.mode==='date'?'':'none';
+  $('#recInfo').innerHTML=r.enabled
+    ? `<b style="font-weight:500">${inr(r.amount)}</b> will automatically be added to your vault every month
+       ${r.mode==='salary'?'according to your selected salary-day schedule.':'on the '+ordinal(r.day)+'.'}
+       <br><span style="color:var(--brass)">Next deposit: ${fmtDate(nextDeposit())}</span>`
+    : 'Auto-save is paused. Enable it to build your vault automatically each month.';
+  $$('#sheetRec .presets button').forEach(b=>b.classList.toggle('on',+b.dataset.v===r.amount));
+}
+function renderTxns(){
+  const list=$('#txList'),f=state.filter;
+  const rows=state.txns.filter(t=>f==='all'||t.kind===f);
+  list.innerHTML=rows.length? rows.map(t=>{
+    const kindLabel=t.kind==='add'?'Added Money':t.kind==='deduct'?'Money Deducted':'Recurring Savings';
+    const title=t.category?escapeHtml(t.category):escapeHtml(t.label||kindLabel);
+    const meta=[fmtDate(t.date),kindLabel];
+    if(t.comment)meta.push(escapeHtml(t.comment));
+    return `
+    <div class="tx">
+      <div class="t">${title}</div>
+      <div class="a ${t.amount>0?'p':'n'}">${t.amount>0?'+ ':'− '}${inr(Math.abs(t.amount))}</div>
+      <div class="d">${meta.join(' · ')}</div>
+      <div class="b">Bal ${inr(t.after)}</div>
+    </div>`;
+  }).join('') : '<div class="empty">No transactions in this filter.</div>';
+}
+function totals(){
+  const dep=state.txns.filter(t=>t.amount>0).reduce((a,t)=>a+t.amount,0);
+  const wit=state.txns.filter(t=>t.amount<0).reduce((a,t)=>a-t.amount,0);
+  const lastD=state.txns.find(t=>t.amount>0),lastW=state.txns.find(t=>t.amount<0);
+  return {dep,wit,lastD,lastW};
+}
+function openMoneyPanel(){
+  const {dep,wit,lastD,lastW}=totals();
+  $('#mpTotal').textContent=inr(state.balance);
+  $('#mpDep').textContent=inr(dep);
+  $('#mpWit').textContent=inr(wit);
+  $('#mpRec').textContent=state.recurring.enabled?inr(state.recurring.amount)+'/mo':'Paused';
+  $('#mpLastD').textContent=lastD?`${inr(lastD.amount)} · ${fmtDate(lastD.date).slice(0,6)}`:'—';
+  $('#mpLastW').textContent=lastW?`${inr(-lastW.amount)} · ${fmtDate(lastW.date).slice(0,6)}`:'—';
+  $('#mpBal').textContent=inr(state.balance);
+  $('#moneyPanel').classList.add('show');
+}
+$('[data-close="money"]').onclick=()=>$('#moneyPanel').classList.remove('show');
+
+/* sheets */
+let activeSheet=null;
+function openSheet(id){
+  closeSheet();
+  activeSheet=$(id);activeSheet.classList.add('show');$('#scrim').classList.add('show');
+  const first=activeSheet.querySelector('input');if(first&&innerWidth>900)setTimeout(()=>first.focus(),260);
+}
+function closeSheet(){
+  if(activeSheet)activeSheet.classList.remove('show');
+  activeSheet=null;$('#scrim').classList.remove('show');
+}
+$('#scrim').onclick=closeSheet;
+$$('[data-close="sheet"]').forEach(b=>b.onclick=closeSheet);
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet();});
+
+const digits=s=>String(s).replace(/[^\d]/g,'');
+function moneyInput(el,onChange){
+  el.addEventListener('input',()=>{
+    const v=digits(el.value);
+    el.value=v?inr(+v):'';
+    onChange(+v||0);
+  });
+}
+let addVal=0;
+function renderAdd(){
+  $('#addCur').textContent=inr(state.balance);
+  $('#addDelta').textContent=inr(addVal);
+  $('#addNew').textContent=inr(state.balance+addVal);
+  $('#addErr').textContent='';
+}
+moneyInput($('#addAmt'),v=>{addVal=v;renderAdd();
+  $$('#sheetAdd .presets button').forEach(b=>b.classList.toggle('on',+b.dataset.v===v));});
+moneyInput($('#recAmt'),v=>{state.recurring.amount=v;renderRecurring();});
+
+let deductVal=0;
+function renderDeduct(){
+  $('#deductCur').textContent=inr(state.balance);
+  $('#deductDelta').textContent=inr(deductVal);
+  $('#deductNew').textContent=inr(Math.max(0,state.balance-deductVal));
+  $('#deductErr').textContent='';
+}
+moneyInput($('#deductAmt'),v=>{deductVal=v;renderDeduct();});
+$$('.presets').forEach(p=>p.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+  const inp=$('#'+p.dataset.for);inp.value=inr(+b.dataset.v);
+  inp.dispatchEvent(new Event('input'));
+}));
+
+for(let d=1;d<=28;d++){
+  const o=document.createElement('option');o.value=d;o.textContent='Every month on the '+ordinal(d);
+  $('#recDay').appendChild(o);
+}
+$('#recMode').onchange=e=>{state.recurring.mode=e.target.value;renderRecurring();};
+$('#recDay').onchange=e=>{state.recurring.day=+e.target.value;renderRecurring();};
+$('#recTog').onclick=async()=>{
+  const wantEnabled=!state.recurring.enabled;
+  if(wantEnabled&&state.recurring.amount<=0){toast('Enter a monthly amount first','neg');return;}
+  const result=await postRecurringPlan({enabled:wantEnabled});
+  renderRecurring();
+  if(!result.ok){toast(result.error,'neg');return;}
+  toast(state.recurring.enabled?'Monthly auto-save enabled':'Recurring savings paused',
+    state.recurring.enabled?'pos':null);
+};
+$('#recSave').onclick=async()=>{
+  if(!state.recurring.amount){toast('Enter a monthly amount','neg');return;}
+  const result=await postRecurringPlan({});
+  if(!result.ok){toast(result.error,'neg');return;}
+  renderRecurring();closeSheet();
+  toast(state.recurring.enabled
+    ? `${inr(state.recurring.amount)} scheduled — next on ${fmtDate(nextDeposit())}`
+    : 'Plan saved (paused)','pos');
+};
+$('#recCancel').onclick=async()=>{
+  await postRecurringPlan({enabled:false});
+  renderRecurring();
+  closeSheet();toast('Recurring savings cancelled');
+};
+$('#filters').onclick=e=>{
+  const b=e.target.closest('button');if(!b)return;
+  state.filter=b.dataset.f;
+  $$('#filters button').forEach(x=>x.classList.toggle('on',x===b));
+  renderTxns();
+};
+
+/* deposits / withdrawals */
+async function doAdd(){
+  if(state.busy)return;
+  if(addVal<=0){$('#addErr').textContent='Enter an amount to add';return;}
+  const note=$('#addNote').value.trim()||'Added to Vault';
+  state.busy=true;closeSheet();
+  setStatus('Depositing','busy');
+  const result=await postTxn('add',addVal,{label:note});
+  if(!result.ok){
+    toast(result.error||'Could not add money','neg');
+    setStatus('Vault Open','open');
+    state.busy=false;
+    return;
+  }
+  renderBalance();renderTxns();
+  await syncMoney(true);
+  toast(`${inr(addVal)} added to vault`,'pos');
+  setStatus('Vault Open','open');
+  addVal=0;$('#addAmt').value='';$('#addNote').value='';renderAdd();
+  state.busy=false;
+}
+$('#addGo').onclick=doAdd;
+
+async function doDeduct(){
+  if(state.busy)return;
+  if(deductVal<=0){$('#deductErr').textContent='Enter an amount to deduct';return;}
+  if(deductVal>state.balance){
+    $('#deductErr').textContent=`Insufficient vault balance. You currently have ${inr(state.balance)} available.`;
+    return;
+  }
+  const category=$('#deductCategory').value||null;
+  const comment=$('#deductComment').value.trim()||null;
+  state.busy=true;closeSheet();
+  setStatus('Processing','busy');
+  const result=await postTxn('deduct',deductVal,{category,comment});
+  if(!result.ok){
+    toast(result.error||'Could not complete deduction','neg');
+    if(typeof result.balance==='number'){state.balance=result.balance;renderBalance(false);}
+    setStatus('Vault Open','open');
+    state.busy=false;
+    return;
+  }
+  renderBalance();renderTxns();
+  await syncMoney(true);
+  toast(`${inr(deductVal)} deducted${category?' · '+category:''}`,'neg');
+  setStatus('Vault Open','open');
+  deductVal=0;$('#deductAmt').value='';$('#deductCategory').value='';$('#deductComment').value='';renderDeduct();
+  state.busy=false;
+}
+$('#deductGo').onclick=doDeduct;
+
+/* ---------- counting machine flow ---------- */
+let machVal=0, camReturn=null;
+const machPanel=$('#machPanel');
+function machStage(id){ $$('.machStage').forEach(s=>s.classList.toggle('on',s.id===id)); }
+function renderMachVal(){
+  const el=$('#machAmt');
+  el.textContent=machVal?inr(machVal):'₹ 0';
+  el.classList.toggle('dim',!machVal);
+  $('#machNote').textContent=machVal?`Amount to count: ${inr(machVal)}`
+    :'Feed cash into the counter, or enter the amount.';
+}
+async function focusMachine(){
+  if(state.busy||!state.open)return;
+  $('#moneyPanel').classList.remove('show');
+  closeSheet();
+  machStage('stageEntry');
+  $('#machTitle').textContent='Add Money to Vault';
+  machVal=0;renderMachVal();
+  dispLight.intensity=1.1;
+  drawDisp('READY','₹0','run');
+  machPanel.classList.add('show');
+  $('#balanceCard').classList.remove('show');
+  camReturn=CAM_OPEN();
+  await camTo(...CAM_MACH(),1300);
+}
+function abortCount(){
+  mach.running=false;mach.el=0;mach.target=0;mach.counted=0;mach.phase='idle';
+  flyNotes.forEach(n=>n.visible=false);
+  dispLight.color.set(0xffb070);
+  machStage('stageEntry');
+  $('#machTitle').textContent='Add Money to Vault';
+  machVal=0;renderMachVal();
+}
+function closeMachine(force){
+  if(mach.running){ if(!force)return; abortCount(); }
+  machPanel.classList.remove('show');
+  mach.phase='idle';
+  drawDisp('STANDBY','₹0','idle');
+  dispLight.intensity=0;
+  countStack.scale.y=.001;feedStack.scale.y=1;
+  flyNotes.forEach(n=>n.visible=false);
+  if(state.open)$('#balanceCard').classList.add('show');
+  if(camReturn){camTo(...camReturn,1200);camReturn=null;}
+}
+$('[data-close="mach"]').onclick=()=>closeMachine();
+['1','2','3','4','5','6','7','8','9','del','0','clr'].forEach(k=>{
+  const b=document.createElement('button');
+  if(k==='del'||k==='clr'){b.className='fn';b.textContent=k==='del'?'Back':'Clear';}
+  else b.textContent=k;
+  b.onclick=()=>{
+    if(k==='clr')machVal=0;
+    else if(k==='del')machVal=Math.floor(machVal/10);
+    else machVal=Math.min(9999999,machVal*10+ +k);
+    renderMachVal();
+  };
+  $('#machKeys').appendChild(b);
+});
+function startCounting(){
+  if(mach.running)return;
+  if(machVal<1){$('#machNote').textContent='Enter at least ₹1 to start counting.';return;}
+  mach.target=machVal;
+  mach.notes=clamp(Math.round(machVal/500),4,60);
+  mach.dur=clamp(1100+mach.notes*95,1600,5200);
+  mach.el=0;mach.counted=0;mach.running=true;mach.phase='count';
+  machStage('stageCount');
+  $('#machTitle').textContent='Cash Counter';
+  $('#machState').textContent='Counting cash';
+  $('#machSub').textContent='of '+inr(machVal);
+  $('#machDone').style.display='none';
+  $('#machDoneBtns').style.display='none';
+  $('#machProg i').style.width='0%';
+  dispLight.intensity=1.5;
+  feedStack.scale.y=1;countStack.scale.y=.001;
+  tween({dur:220,up:t=>{goBtn.position.z=goBtn.userData.home-Math.sin(t*Math.PI)*.012;}});
+}
+$('#machStart').onclick=startCounting;
+function finishCounting(){
+  mach.running=false;mach.phase='done';
+  flyNotes.forEach(n=>n.visible=false);
+  drawDisp('COUNT COMPLETE',inr(mach.target),'ok');
+  dispLight.color.set(0x9effc4);dispLight.intensity=2.4;
+  $('#machState').textContent='Count complete';
+  $('#machCounted').textContent=inr(mach.target);
+  $('#machSub').textContent='verified · '+mach.notes+' notes';
+  $('#machProg i').style.width='100%';
+  $('#machDone').textContent=inr(mach.target)+' successfully counted';
+  $('#machDone').style.display='';
+  $('#machDoneBtns').style.display='';
+  tween({dur:420,up:t=>{dispMat.emissiveIntensity=.35+Math.sin(t*Math.PI*3)*.5;},
+    done:()=>{dispMat.emissiveIntensity=.9;}});
+}
+$('#machCancel').onclick=()=>{
+  dispLight.color.set(0x9fd9ff);
+  machStage('stageEntry');
+  $('#machTitle').textContent='Add Money to Vault';
+  machVal=0;renderMachVal();
+  drawDisp('READY','₹0','run');
+  countStack.scale.y=.001;
+  toast('Count discarded');
+};
+$('#machDeposit').onclick=async()=>{
+  if(state.busy)return;
+  const amt=mach.target;
+  state.busy=true;
+  machPanel.classList.remove('show');
+  setStatus('Depositing','busy');
+  if(camReturn){camTo(...camReturn,1200);camReturn=null;}
+  await tween({dur:620,ez:easeOut,up:t=>{
+    countStack.position.z=.2+t*.34;
+    countStack.material.transparent=true;countStack.material.opacity=1-t;
+  }});
+  countStack.position.z=.2;countStack.scale.y=.001;
+  countStack.material.opacity=1;countStack.material.transparent=false;
+  dispLight.color.set(0x9fd9ff);dispLight.intensity=0;
+  drawDisp('STANDBY','₹0','idle');
+  const result=await postTxn('add',amt,{label:'Counted cash deposit'});
+  if(!result.ok){
+    toast(result.error||'Could not add money','neg');
+    mach.phase='idle';mach.target=0;
+    $('#balanceCard').classList.add('show');
+    setStatus('Vault Open','open');
+    state.busy=false;
+    return;
+  }
+  renderBalance();renderTxns();
+  tween({dur:900,ez:easeOut,up:t=>{inner.intensity=1.9+Math.sin(t*Math.PI)*1.7;}});
+  await syncMoney(true);
+  mach.phase='idle';mach.target=0;
+  $('#balanceCard').classList.add('show');
+  setStatus('Vault Open','open');
+  toast(inr(amt)+' counted and added to vault','pos');
+  state.busy=false;
+};
+
+/* actions */
+$('#actions').onclick=e=>{
+  const b=e.target.closest('button[data-act]');if(!b||state.busy||mach.running)return;
+  const a=b.dataset.act;
+  if(a==='add'){renderAdd();openSheet('#sheetAdd');}
+  if(a==='deduct'){renderDeduct();openSheet('#sheetDeduct');}
+  if(a==='count'){focusMachine();}
+  if(a==='recurring'){renderRecurring();openSheet('#sheetRec');}
+  if(a==='history'){renderTxns();openSheet('#sheetHist');}
+  if(a==='close')closeVault();
+};
+
+/* keypad */
+let pin='';
+const KEYS=['1','2','3','4','5','6','7','8','9','clear','0','enter'];
+KEYS.forEach(k=>{
+  const b=document.createElement('button');
+  if(k==='clear'||k==='enter'){b.className='wide';b.textContent=k==='clear'?'Clr':'Enter';}
+  else b.textContent=k;
+  b.onclick=()=>press(k);
+  $('#keys').appendChild(b);
+});
+function renderPin(){
+  $$('#pinDots i').forEach((d,i)=>d.classList.toggle('on',i<pin.length));
+}
+function revealAccessPanel(){
+  if(state.accessShown||state.open||state.busy)return;
+  state.accessShown=true;
+  padFlash=.45;
+  $('#lockCard').classList.add('show');
+}
+function press(k){
+  if(state.busy||state.open||!state.accessShown)return;
+  if(k==='clear'){pin='';$('#lockMsg').textContent='';$('#pinDots').classList.remove('err');renderPin();return;}
+  if(k==='enter'){submitPin();return;}
+  if(pin.length>=4)return;
+  pin+=k;renderPin();
+  drawScreen('•'.repeat(pin.length).padEnd(4,'–'),'warn');
+  if(pin.length===4)setTimeout(submitPin,260);
+}
+document.addEventListener('keydown',e=>{
+  if(state.open||activeSheet||!state.accessShown)return;
+  if(/^[0-9]$/.test(e.key))press(e.key);
+  if(e.key==='Backspace'){pin=pin.slice(0,-1);renderPin();drawScreen(pin.length?'•'.repeat(pin.length).padEnd(4,'–'):'LOCKED',pin.length?'warn':'bad');}
+  if(e.key==='Enter')press('enter');
+});
+async function submitPin(){
+  if(pin!==PIN){
+    $('#lockMsg').textContent='Incorrect passcode';
+    $('#pinDots').classList.add('err');
+    drawScreen('DENIED','bad');
+    const g=$('#lockCard');
+    await tween({dur:420,up:t=>{g.style.transform=`translateX(${Math.sin(t*Math.PI*4)*7*(1-t)}px)`;}});
+    g.style.transform='';
+    pin='';renderPin();
+    setTimeout(()=>{if(!state.open)drawScreen('LOCKED','bad');},700);
+    return;
+  }
+  $('#lockMsg').textContent='';
+  await openVault();
+}
+
+/* ---------- open / close sequences ---------- */
+async function openVault(){
+  state.busy=true;
+  setStatus('Authenticating','busy');
+  drawScreen('····','warn');
+  await wait(280);
+  drawScreen('GRANTED','ok');
+  setStatus('Access Granted','granted');
+  $('#lockCard').classList.remove('show');
+  state.accessShown=false;
+  // dial spin + bolts retract
+  const s0=spin.rotation.z;
+  tween({dur:1500,ez:ease,up:t=>{spin.rotation.z=s0-t*Math.PI*2.6;}});
+  await wait(520);
+  await tween({dur:620,ez:easeOut,up:t=>{
+    bolts.forEach(b=>b.position.x=b.userData.home-t*.14);
+    boltL.forEach(b=>b.position.x=b.userData.home+t*.14);
+  }});
+  await wait(120);
+  moneyGrp.visible=true;
+  tween({dur:1500,ez:easeOut,up:t=>{inner.intensity=t*1.9;lightBar.material.emissiveIntensity=t*2.4;}});
+  camTo(...CAM_OPEN(),1700);
+  await tween({dur:1900,ez:ease,up:t=>{hinge.rotation.y=-t*1.62;}});
+  state.open=true;state.busy=false;
+  setStatus('Vault Open','open');
+  $('#balanceCard').classList.add('show');
+  $('#actions').classList.add('show');
+  renderBalance(true);
+  toast('Vault open · your savings are inside','pos');
+}
+async function closeVault(){
+  if(state.busy)return;
+  state.busy=true;
+  closeSheet();
+  closeMachine(true);
+  $('#moneyPanel').classList.remove('show');
+  setHover(null);
+  setStatus('Sealing','busy');
+  $('#actions').classList.remove('show');
+  $('#balanceCard').classList.remove('show');
+  // contents settle
+  await tween({dur:420,ez:easeOut,up:t=>{
+    bundles.forEach((b,i)=>{b.rotation.y*=(1-t*.15);});
+  }});
+  camTo(...CAM_LOCKED(),1800);
+  await tween({dur:1700,ez:ease,up:t=>{hinge.rotation.y=-(1-t)*1.62;}});
+  tween({dur:700,up:t=>{inner.intensity=1.9*(1-t);lightBar.material.emissiveIntensity=2.4*(1-t);}});
+  await tween({dur:700,ez:ease,up:t=>{
+    bolts.forEach(b=>b.position.x=b.userData.home-(1-t)*.14);
+    boltL.forEach(b=>b.position.x=b.userData.home+(1-t)*.14);
+  }});
+  const s0=spin.rotation.z;
+  await tween({dur:1100,ez:ease,up:t=>{spin.rotation.z=s0+t*Math.PI*1.8;}});
+  moneyGrp.visible=false;
+  drawScreen('LOCKED','bad');
+  setStatus('Vault Locked','locked');
+  state.open=false;state.busy=false;
+  state.accessShown=false;
+  pin='';renderPin();
+  toast('Vault locked · balance protected');
+}
+
+/* ---------- loop ---------- */
+let last=performance.now(),idle=0;
+function frame(now){
+  const dt=Math.min(48,now-last);last=now;
+  stepTweens(dt);
+  pickScene();
+  animMachine(dt,now);
+  animPadGlow(now,dt);
+  if(!state.busy){
+    idle+=dt;
+    vault.rotation.y=Math.sin(idle/5200)*0.012;
+  }
+  controls.update();
+  renderer.render(scene,camera);
+  requestAnimationFrame(frame);
+}
+function reframe(){
+  camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+  if(state.busy||tweens.length)return;
+  const [p,t]=state.open?CAM_OPEN():CAM_LOCKED();
+  const d=new THREE.Vector3(...p).length();
+  camera.position.normalize().multiplyScalar(d);
+  controls.target.set(...t);
+}
+function animMachine(dt,now){
+  const lift=machHot&&!mach.running?1:0;
+  if(!mach.running){
+    machBody.position.y+=((lift?.014:0)-machBody.position.y)*.12;
+    machBody.rotation.y+=((lift?-.05:0)-machBody.rotation.y)*.1;
+    if(mach.phase==='done') rollers.forEach(r=>r.rotation.y*=.94);
+    return;
+  }
+  mach.el+=dt;
+  const p=clamp(mach.el/mach.dur,0,1);
+  const speed=Math.min(1,p*7)*(1-Math.pow(p,4)*.85);
+  mach.spin+=dt*.055*speed;
+  rollers.forEach((r,i)=>r.rotation.y=mach.spin*(i===4?-1.3:1));
+  machBody.position.x=Math.sin(now/22)*.0016*speed;
+  machBody.position.y=Math.sin(now/17)*.0012*speed;
+  flyNotes.forEach((n,i)=>{
+    const q=(p*mach.notes-i*(1/flyNotes.length))%1;
+    if(q<0||p>=1){n.visible=false;return;}
+    n.visible=true;
+    n.position.copy(notePath.getPointAt(q));
+    n.rotation.set(-1.15+q*1.05,-.42+q*.34,Math.sin(q*Math.PI*2)*.06);
+    n.scale.set(1,1,1+speed*(q>.15&&q<.8?1.9:.4));
+  });
+  feedStack.scale.y=Math.max(.02,1-p);
+  countStack.scale.y=Math.max(.001,p);
+  mach.counted=Math.round(mach.target*easeOut(p)/100)*100;
+  $('#machCounted').textContent=inr(mach.counted);
+  $('#machProg i').style.width=(p*100).toFixed(0)+'%';
+  if(now-(mach.lastDraw||0)>70){
+    mach.lastDraw=now;
+    drawDisp('COUNTING CASH',inr(mach.counted),'run');
+  }
+  if(p>=1)finishCounting();
+}
+addEventListener('resize',reframe);
+renderer.domElement.style.cursor='grab';
+reframe();
+camera.position.set(...CAM_LOCKED()[0]);controls.target.set(...CAM_LOCKED()[1]);
+
+renderRecurring();
+requestAnimationFrame(frame);
+Promise.all([loadVault(),loadRecurringPlan(),wait(700)]).then(()=>{
+  $('#loader').classList.add('gone');
+});
+</script>
+</body>
+</html>
