@@ -94,7 +94,13 @@ export default async function HouseholdPage({ searchParams }: { searchParams: Pr
                   {activeGoals.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No goals yet — create one to start saving toward something together.</p>
                   ) : (
-                    activeGoals.map((g) => <GoalCard key={g.goal.id} summary={g} />)
+                    activeGoals.map((g) => (
+                      <GoalCard
+                        key={g.goal.id}
+                        summary={g}
+                        canDelete={isOwner || g.goal.created_by === myUserId}
+                      />
+                    ))
                   )}
                 </CardContent>
               </Card>

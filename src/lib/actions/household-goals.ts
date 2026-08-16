@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { displayName } from "@/lib/utils";
 import type { HouseholdGoal, HouseholdGoalStatus, HouseholdVaultTransactionSource } from "@/lib/supabase/types";
 
 export interface HouseholdGoalSummary {
@@ -73,6 +74,22 @@ export async function createGoal(
   return { goalId: data.goal_id };
 }
 
+/**
+ * Deletes a goal along with its dedicated vault and contribution history —
+ * only the household owner or the goal's original creator may do this. The
+ * real gate is delete_household_goal()/RLS server-side (see supabase/schema.sql);
+ * the UI only ever hides the control for everyone else.
+ */
+export async function deleteGoal(goalId: string): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("delete_household_goal", { p_goal_id: goalId });
+  if (error || !data?.ok) return { error: error?.message ?? "Failed to delete goal" };
+
+  revalidatePath("/household");
+  revalidatePath("/vault");
+  return { ok: true };
+}
+
 /** Goal detail with a per-contributor breakdown (amount + percentage of this goal only) — never exposes anyone's private vault balance, only what they've explicitly contributed here. */
 export async function getGoalDetail(goalId: string): Promise<HouseholdGoalDetail | null> {
   const supabase = await createClient();
@@ -107,7 +124,7 @@ export async function getGoalDetail(goalId: string): Promise<HouseholdGoalDetail
   const contributors: GoalContributor[] = Array.from(byUser.entries())
     .map(([userId, v]) => ({
       userId,
-      name: profileById.get(userId)?.name || "Member",
+      name: displayName(profileById.get(userId)),
       avatarUrl: profileById.get(userId)?.avatar_url ?? null,
       amount: v.amount,
       percentage: currentAmount > 0 ? Math.round((v.amount / currentAmount) * 100) : 0,

@@ -43,6 +43,10 @@ function describeActivity(kind: string, actorName: string, payload: Record<strin
       const name = typeof payload.name === "string" ? payload.name : "a goal";
       return `🎉 "${name}" reached its savings target!`;
     }
+    case "goal_deleted": {
+      const name = typeof payload.name === "string" ? payload.name : "a goal";
+      return `${actorName} deleted the "${name}" goal`;
+    }
     case "member_joined":
       return `${actorName} joined the household`;
     default:

@@ -3,6 +3,7 @@
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { displayName } from "@/lib/utils";
 import type { Household, HouseholdRole } from "@/lib/supabase/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
@@ -147,7 +148,7 @@ export async function getHouseholdContext(householdId: string): Promise<Househol
         userId: m.user_id,
         role: m.role,
         joinedAt: m.joined_at,
-        name: profileById.get(m.user_id)?.name || "Member",
+        name: displayName(profileById.get(m.user_id)),
         avatarUrl: profileById.get(m.user_id)?.avatar_url ?? null,
         isMe: m.user_id === user.id,
       }))

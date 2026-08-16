@@ -388,6 +388,10 @@ export type Database = {
         };
         Returns: { ok: boolean; goal_id: string; vault_id: string };
       };
+      delete_household_goal: {
+        Args: { p_goal_id: string };
+        Returns: { ok: boolean };
+      };
       redeem_household_invite: {
         Args: { p_token: string };
         Returns: { ok: boolean; household_id: string };

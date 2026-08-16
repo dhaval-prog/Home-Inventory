@@ -25,3 +25,11 @@ export function initials(name: string): string {
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
 }
+
+/** A member's display name, always derived from their own profile — never a hardcoded label. Falls back to their email's local part when they haven't set a name, matching handle_new_user()'s own fallback in supabase/schema.sql. */
+export function displayName(profile: { name?: string | null; email?: string | null } | null | undefined): string {
+  const name = profile?.name?.trim();
+  if (name) return name;
+  const emailPrefix = profile?.email?.split("@")[0]?.trim();
+  return emailPrefix || "Member";
+}

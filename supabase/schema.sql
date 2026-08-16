@@ -559,6 +559,37 @@ begin
 end;
 $$;
 
+-- Deletes a goal and everything that belongs only to it (its vault, cascading
+-- to household_vault_transactions — see the FKs above), gated to the
+-- household owner or whoever created the goal. SECURITY INVOKER: the explicit
+-- check below is the real gate, but every delete still passes through the
+-- household_goals_delete_owner_or_creator / household_vaults_delete_owner_or_creator
+-- RLS policies too (defense in depth, never a bypass).
+create or replace function public.delete_household_goal(p_goal_id uuid)
+returns jsonb
+language plpgsql
+security invoker set search_path = public
+as $$
+declare
+  v_goal record;
+begin
+  select * into v_goal from household_goals where id = p_goal_id;
+  if v_goal is null then
+    raise exception 'Goal not found';
+  end if;
+  if not (is_household_owner(v_goal.household_id) or v_goal.created_by = auth.uid()) then
+    raise exception 'You do not have permission to delete this goal';
+  end if;
+
+  insert into household_activity (household_id, actor_user_id, kind, payload)
+    values (v_goal.household_id, auth.uid(), 'goal_deleted', jsonb_build_object('name', v_goal.name));
+
+  delete from household_vaults where id = v_goal.vault_id;
+
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
 -- Redeeming an invite happens before the user is a household member, so this
 -- runs SECURITY DEFINER to look up the invite (bypassing the membership-gated
 -- household_invites RLS below) and insert the new membership row.
@@ -634,6 +665,21 @@ drop policy if exists "household_members_delete_owner_or_self" on public.househo
 create policy "household_members_delete_owner_or_self" on public.household_members for delete
   using (is_household_owner(household_id) or user_id = auth.uid());
 
+-- profiles_select_own (above) only ever exposes a user's own row, so every
+-- other member of a shared household previously fell back to a generic
+-- "Member" label in the UI — this additive policy (RLS OR's policies for the
+-- same command together) lets co-members see each other's name/avatar without
+-- widening access to unrelated users.
+drop policy if exists "profiles_select_household_members" on public.profiles;
+create policy "profiles_select_household_members" on public.profiles for select
+  using (
+    exists (
+      select 1 from household_members hm_self
+      join household_members hm_target on hm_target.household_id = hm_self.household_id
+      where hm_self.user_id = auth.uid() and hm_target.user_id = profiles.id
+    )
+  );
+
 drop policy if exists "household_invites_select_member" on public.household_invites;
 create policy "household_invites_select_member" on public.household_invites for select
   using (is_household_member(household_id));
@@ -653,6 +699,12 @@ create policy "household_vaults_insert_goal" on public.household_vaults for inse
 drop policy if exists "household_vaults_update_owner" on public.household_vaults;
 create policy "household_vaults_update_owner" on public.household_vaults for update
   using (is_household_owner(household_id)) with check (is_household_owner(household_id));
+-- Deleting a goal's vault (see delete_household_goal() below) cascades to its
+-- household_goals row and household_vault_transactions — gated the same way
+-- as the goal itself: the household owner, or whoever created that goal.
+drop policy if exists "household_vaults_delete_owner_or_creator" on public.household_vaults;
+create policy "household_vaults_delete_owner_or_creator" on public.household_vaults for delete
+  using (is_household_owner(household_id) or created_by = auth.uid());
 
 drop policy if exists "household_goals_select_member" on public.household_goals;
 create policy "household_goals_select_member" on public.household_goals for select
@@ -665,8 +717,9 @@ create policy "household_goals_update_owner_or_creator" on public.household_goal
   using (is_household_owner(household_id) or created_by = auth.uid())
   with check (is_household_owner(household_id) or created_by = auth.uid());
 drop policy if exists "household_goals_delete_owner" on public.household_goals;
-create policy "household_goals_delete_owner" on public.household_goals for delete
-  using (is_household_owner(household_id));
+drop policy if exists "household_goals_delete_owner_or_creator" on public.household_goals;
+create policy "household_goals_delete_owner_or_creator" on public.household_goals for delete
+  using (is_household_owner(household_id) or created_by = auth.uid());
 
 drop policy if exists "household_vault_txns_select_member" on public.household_vault_transactions;
 create policy "household_vault_txns_select_member" on public.household_vault_transactions for select
