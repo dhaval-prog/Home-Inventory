@@ -73,22 +73,3 @@ export async function deleteFurniture(furnitureId: string, roomId: string) {
   revalidatePath("/home/rooms/" + roomId);
   redirect("/home/rooms/" + roomId);
 }
-
-/**
- * Persists a drag/rotate in the 2D top-down room view. Coordinates are
- * room-local meters; rotationY is degrees around the vertical axis.
- */
-export async function updateFurniturePlacement(
-  furnitureId: string,
-  roomId: string,
-  x: number,
-  z: number,
-  rotationY: number
-) {
-  const supabase = await createClient();
-  await supabase
-    .from("furniture")
-    .update({ position_x: x, position_z: z, rotation_y: rotationY })
-    .eq("id", furnitureId);
-  revalidatePath("/home/rooms/" + roomId);
-}
