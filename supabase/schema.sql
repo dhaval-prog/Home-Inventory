@@ -864,3 +864,470 @@ create policy "household_chat_update_own_unseen" on public.household_chat_messag
 drop policy if exists "household_chat_delete_own_unseen" on public.household_chat_messages;
 create policy "household_chat_delete_own_unseen" on public.household_chat_messages for delete
   using (user_id = auth.uid() and kind = 'user' and not chat_message_seen_by_others(id));
+
+-- ─────────────────────────────────────────────────────────────
+-- Let's Split — shared-expense splitting, deliberately separate from
+-- household_vaults/household_goals (savings). A household always gets one
+-- default split_group (auto-created below, mirroring the shared vault),
+-- membership synced 1:1 with household_members; additional named groups
+-- (e.g. "Goa Trip") are a future UI layer on top of the same tables, with
+-- explicit, smaller membership. Balances are NEVER stored — always derived
+-- live from split_expense_participants + split_settlements, mirroring how
+-- household_vault_transactions/getVaultSummary already works for savings.
+-- ─────────────────────────────────────────────────────────────
+create table if not exists public.split_groups (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households (id) on delete cascade,
+  name text not null,
+  is_default boolean not null default false,
+  created_by uuid not null references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create index if not exists split_groups_household_id_idx on public.split_groups (household_id);
+-- At most one default group per household — the trigger below relies on this.
+create unique index if not exists split_groups_one_default_per_household
+  on public.split_groups (household_id) where is_default;
+
+create table if not exists public.split_members (
+  group_id uuid not null references public.split_groups (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  joined_at timestamptz not null default now(),
+  primary key (group_id, user_id)
+);
+create index if not exists split_members_user_id_idx on public.split_members (user_id);
+
+create table if not exists public.split_expenses (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.split_groups (id) on delete cascade,
+  household_id uuid not null references public.households (id) on delete cascade,
+  created_by uuid not null references auth.users (id) on delete cascade,
+  description text not null,
+  amount numeric not null check (amount > 0),
+  category text,
+  paid_by uuid not null references auth.users (id) on delete cascade,
+  expense_date date not null default current_date,
+  comment text,
+  receipt_url text,
+  split_method text not null check (split_method in ('equal', 'exact', 'percentage', 'shares')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists split_expenses_group_id_idx on public.split_expenses (group_id);
+create index if not exists split_expenses_household_id_idx on public.split_expenses (household_id);
+create index if not exists split_expenses_group_date_idx on public.split_expenses (group_id, expense_date desc, created_at desc);
+
+drop trigger if exists split_expenses_set_updated_at on public.split_expenses;
+create trigger split_expenses_set_updated_at
+  before update on public.split_expenses
+  for each row
+  execute function public.set_updated_at();
+
+-- One row per participant per expense — owed_amount is that participant's
+-- share of the total (always sums to split_expenses.amount, enforced in
+-- record_split_expense/update_split_expense below, never trusted from the
+-- client alone). The payer's own owed_amount is a real row too (their own
+-- share of what they paid), so net position is always
+-- (paid_by = user ? amount : 0) - owed_amount, summed per counterpart.
+create table if not exists public.split_expense_participants (
+  expense_id uuid not null references public.split_expenses (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  share_type text not null check (share_type in ('equal', 'exact', 'percentage', 'shares')),
+  share_value numeric,
+  owed_amount numeric not null check (owed_amount >= 0),
+  primary key (expense_id, user_id)
+);
+create index if not exists split_expense_participants_user_id_idx on public.split_expense_participants (user_id);
+
+-- A settlement is just a fact ("X handed Y ₹amount") — never a payment
+-- integration (see spec §9), so there's no pending/processing status here,
+-- only a record of what already happened outside the app.
+create table if not exists public.split_settlements (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.split_groups (id) on delete cascade,
+  household_id uuid not null references public.households (id) on delete cascade,
+  from_user uuid not null references auth.users (id) on delete cascade,
+  to_user uuid not null references auth.users (id) on delete cascade,
+  amount numeric not null check (amount > 0),
+  method text not null check (method in ('cash', 'bank_transfer', 'upi', 'other')),
+  recorded_by uuid not null references auth.users (id) on delete cascade,
+  comment text,
+  settled_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  check (from_user != to_user)
+);
+create index if not exists split_settlements_group_id_idx on public.split_settlements (group_id);
+
+alter table public.split_groups enable row level security;
+alter table public.split_members enable row level security;
+alter table public.split_expenses enable row level security;
+alter table public.split_expense_participants enable row level security;
+alter table public.split_settlements enable row level security;
+
+create or replace function public.is_split_group_member(p_group_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from split_members
+    where group_id = p_group_id and user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_split_group_member_check(p_group_id uuid, p_user_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (select 1 from split_members where group_id = p_group_id and user_id = p_user_id);
+$$;
+
+drop policy if exists "split_groups_select_member" on public.split_groups;
+create policy "split_groups_select_member" on public.split_groups for select
+  using (is_split_group_member(id));
+drop policy if exists "split_groups_insert_household_member" on public.split_groups;
+create policy "split_groups_insert_household_member" on public.split_groups for insert
+  with check (can_contribute_to_household(household_id) and created_by = auth.uid() and not is_default);
+
+drop policy if exists "split_members_select_group_member" on public.split_members;
+create policy "split_members_select_group_member" on public.split_members for select
+  using (is_split_group_member(group_id));
+
+drop policy if exists "split_expenses_select_group_member" on public.split_expenses;
+create policy "split_expenses_select_group_member" on public.split_expenses for select
+  using (is_split_group_member(group_id));
+-- record_split_expense() runs SECURITY INVOKER, so its own INSERT needs this
+-- policy to succeed — the function's checks above are the primary gate, this
+-- is defense in depth, never a looser rule than the function enforces.
+drop policy if exists "split_expenses_insert_group_member" on public.split_expenses;
+create policy "split_expenses_insert_group_member" on public.split_expenses for insert
+  with check (is_split_group_member(group_id) and created_by = auth.uid());
+drop policy if exists "split_expenses_update_owner_or_creator" on public.split_expenses;
+create policy "split_expenses_update_owner_or_creator" on public.split_expenses for update
+  using (is_household_owner(household_id) or created_by = auth.uid())
+  with check (is_household_owner(household_id) or created_by = auth.uid());
+drop policy if exists "split_expenses_delete_owner_or_creator" on public.split_expenses;
+create policy "split_expenses_delete_owner_or_creator" on public.split_expenses for delete
+  using (is_household_owner(household_id) or created_by = auth.uid());
+
+drop policy if exists "split_expense_participants_select_group_member" on public.split_expense_participants;
+create policy "split_expense_participants_select_group_member" on public.split_expense_participants for select
+  using (exists (select 1 from split_expenses e where e.id = expense_id and is_split_group_member(e.group_id)));
+-- Mirrors split_expenses' own write gate (owner or the expense's creator) —
+-- record_split_expense/update_split_expense are the only callers, both
+-- SECURITY INVOKER, both already enforcing this same rule before writing here.
+drop policy if exists "split_expense_participants_write_owner_or_creator" on public.split_expense_participants;
+create policy "split_expense_participants_write_owner_or_creator" on public.split_expense_participants for all
+  using (exists (select 1 from split_expenses e where e.id = expense_id and (is_household_owner(e.household_id) or e.created_by = auth.uid())))
+  with check (exists (select 1 from split_expenses e where e.id = expense_id and (is_household_owner(e.household_id) or e.created_by = auth.uid())));
+
+drop policy if exists "split_settlements_select_group_member" on public.split_settlements;
+create policy "split_settlements_select_group_member" on public.split_settlements for select
+  using (is_split_group_member(group_id));
+-- record_split_settlement() runs SECURITY INVOKER — mirrors its own check
+-- that the recorder must be one of the two parties, never a third party.
+drop policy if exists "split_settlements_insert_participant" on public.split_settlements;
+create policy "split_settlements_insert_participant" on public.split_settlements for insert
+  with check (is_split_group_member(group_id) and recorded_by = auth.uid() and (auth.uid() = from_user or auth.uid() = to_user));
+
+-- On creating a household, also create its one default split group and seed
+-- its membership with the owner — mirrors the shared-vault half of
+-- handle_new_household() exactly.
+create or replace function public.handle_new_household()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_split_group_id uuid;
+begin
+  insert into public.household_members (household_id, user_id, role)
+  values (new.id, new.owner_id, 'owner');
+
+  insert into public.household_vaults (household_id, vault_type, name, created_by)
+  values (new.id, 'shared', 'Household Savings', new.owner_id);
+
+  insert into public.split_groups (household_id, name, is_default, created_by)
+  values (new.id, 'Household Expenses', true, new.owner_id)
+  returning id into v_split_group_id;
+
+  insert into public.split_members (group_id, user_id) values (v_split_group_id, new.owner_id);
+
+  return new;
+end;
+$$;
+
+-- Keeps the default split group's membership mirrored to household_members —
+-- join the household, join Household Expenses; leave, and you drop out
+-- (your past expenses/settlements stay, only future visibility changes).
+create or replace function public.sync_default_split_group_membership()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_group_id uuid;
+begin
+  select id into v_group_id from split_groups
+    where household_id = coalesce(new.household_id, old.household_id) and is_default;
+  if v_group_id is null then
+    return coalesce(new, old);
+  end if;
+
+  if TG_OP = 'INSERT' then
+    insert into split_members (group_id, user_id) values (v_group_id, new.user_id) on conflict do nothing;
+  elsif TG_OP = 'DELETE' then
+    delete from split_members where group_id = v_group_id and user_id = old.user_id;
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists household_members_sync_default_split_group on public.household_members;
+create trigger household_members_sync_default_split_group
+  after insert or delete on public.household_members
+  for each row
+  execute function public.sync_default_split_group_membership();
+
+-- Records an expense and its per-participant split atomically. The split
+-- math (equal/exact/percentage/shares -> owed_amount per participant) is
+-- computed by the caller (src/lib/actions/split.ts) for easier validation
+-- and testing, but this function re-checks sum(owed_amount) = p_amount
+-- server-side regardless — the client's arithmetic is never trusted alone.
+create or replace function public.record_split_expense(
+  p_group_id uuid,
+  p_description text,
+  p_amount numeric,
+  p_category text,
+  p_paid_by uuid,
+  p_expense_date date,
+  p_comment text,
+  p_split_method text,
+  p_participants jsonb -- [{user_id, share_type, share_value, owed_amount}, ...]
+)
+returns jsonb
+language plpgsql
+security invoker set search_path = public
+as $$
+declare
+  v_household_id uuid;
+  v_expense_id uuid;
+  v_sum numeric;
+  v_participant_count int;
+  v_payer_name text;
+begin
+  if not is_split_group_member(p_group_id) then
+    raise exception 'You are not a member of this split group';
+  end if;
+  select household_id into v_household_id from split_groups where id = p_group_id;
+  if v_household_id is null then
+    raise exception 'Split group not found';
+  end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'Amount must be greater than zero';
+  end if;
+  if not is_split_group_member_check(p_group_id, p_paid_by) then
+    raise exception 'The payer must be a member of this split group';
+  end if;
+
+  select count(*), coalesce(sum((p.value->>'owed_amount')::numeric), 0)
+    into v_participant_count, v_sum
+    from jsonb_array_elements(p_participants) p;
+  if v_participant_count = 0 then
+    raise exception 'An expense needs at least one participant';
+  end if;
+  if abs(v_sum - p_amount) > 0.01 then
+    raise exception 'Participant shares (%) do not add up to the expense amount (%)', v_sum, p_amount;
+  end if;
+
+  insert into split_expenses (group_id, household_id, created_by, description, amount, category, paid_by, expense_date, comment, split_method)
+    values (p_group_id, v_household_id, auth.uid(), p_description, p_amount, p_category, p_paid_by, coalesce(p_expense_date, current_date), p_comment, p_split_method)
+    returning id into v_expense_id;
+
+  insert into split_expense_participants (expense_id, user_id, share_type, share_value, owed_amount)
+    select v_expense_id, (p.value->>'user_id')::uuid, (p.value->>'share_type')::text, (p.value->>'share_value')::numeric, (p.value->>'owed_amount')::numeric
+    from jsonb_array_elements(p_participants) p;
+
+  select coalesce(nullif(name, ''), split_part(email, '@', 1)) into v_payer_name from profiles where id = p_paid_by;
+
+  insert into household_activity (household_id, actor_user_id, kind, payload)
+    values (
+      v_household_id, auth.uid(), 'expense_added',
+      jsonb_build_object('expense_id', v_expense_id, 'description', p_description, 'amount', p_amount, 'payer_name', coalesce(v_payer_name, 'Someone'))
+    );
+
+  return jsonb_build_object('ok', true, 'expense_id', v_expense_id);
+end;
+$$;
+
+-- Replaces an expense's fields and its full participant set atomically —
+-- simpler and safer than a partial participant diff. Same owner-or-creator
+-- gate as delete (see split_expenses_delete_owner_or_creator).
+create or replace function public.update_split_expense(
+  p_expense_id uuid,
+  p_description text,
+  p_amount numeric,
+  p_category text,
+  p_paid_by uuid,
+  p_expense_date date,
+  p_comment text,
+  p_split_method text,
+  p_participants jsonb
+)
+returns jsonb
+language plpgsql
+security invoker set search_path = public
+as $$
+declare
+  v_expense record;
+  v_sum numeric;
+  v_participant_count int;
+begin
+  select * into v_expense from split_expenses where id = p_expense_id;
+  if v_expense is null then
+    raise exception 'Expense not found';
+  end if;
+  if not (is_household_owner(v_expense.household_id) or v_expense.created_by = auth.uid()) then
+    raise exception 'You do not have permission to edit this expense';
+  end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'Amount must be greater than zero';
+  end if;
+  if not is_split_group_member_check(v_expense.group_id, p_paid_by) then
+    raise exception 'The payer must be a member of this split group';
+  end if;
+
+  select count(*), coalesce(sum((p.value->>'owed_amount')::numeric), 0)
+    into v_participant_count, v_sum
+    from jsonb_array_elements(p_participants) p;
+  if v_participant_count = 0 then
+    raise exception 'An expense needs at least one participant';
+  end if;
+  if abs(v_sum - p_amount) > 0.01 then
+    raise exception 'Participant shares (%) do not add up to the expense amount (%)', v_sum, p_amount;
+  end if;
+
+  update split_expenses set
+    description = p_description,
+    amount = p_amount,
+    category = p_category,
+    paid_by = p_paid_by,
+    expense_date = coalesce(p_expense_date, expense_date),
+    comment = p_comment,
+    split_method = p_split_method
+  where id = p_expense_id;
+
+  delete from split_expense_participants where expense_id = p_expense_id;
+  insert into split_expense_participants (expense_id, user_id, share_type, share_value, owed_amount)
+    select p_expense_id, (p.value->>'user_id')::uuid, (p.value->>'share_type')::text, (p.value->>'share_value')::numeric, (p.value->>'owed_amount')::numeric
+    from jsonb_array_elements(p_participants) p;
+
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+-- Deletes an expense (cascades to its participants). Logs activity BEFORE
+-- deleting so the expense's own name is still available to reference.
+create or replace function public.delete_split_expense(p_expense_id uuid)
+returns jsonb
+language plpgsql
+security invoker set search_path = public
+as $$
+declare
+  v_expense record;
+begin
+  select * into v_expense from split_expenses where id = p_expense_id;
+  if v_expense is null then
+    raise exception 'Expense not found';
+  end if;
+  if not (is_household_owner(v_expense.household_id) or v_expense.created_by = auth.uid()) then
+    raise exception 'You do not have permission to delete this expense';
+  end if;
+
+  insert into household_activity (household_id, actor_user_id, kind, payload)
+    values (v_expense.household_id, auth.uid(), 'expense_deleted', jsonb_build_object('description', v_expense.description, 'amount', v_expense.amount));
+
+  delete from split_expenses where id = p_expense_id;
+
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+-- Records a settlement — the caller must be one of the two parties (you can
+-- record that you paid someone, or that someone paid you), never an
+-- uninvolved third party fabricating a payment between two other members.
+create or replace function public.record_split_settlement(
+  p_group_id uuid,
+  p_from_user uuid,
+  p_to_user uuid,
+  p_amount numeric,
+  p_method text,
+  p_comment text
+)
+returns jsonb
+language plpgsql
+security invoker set search_path = public
+as $$
+declare
+  v_household_id uuid;
+  v_settlement_id uuid;
+  v_from_name text;
+  v_to_name text;
+begin
+  if not is_split_group_member(p_group_id) then
+    raise exception 'You are not a member of this split group';
+  end if;
+  if auth.uid() != p_from_user and auth.uid() != p_to_user then
+    raise exception 'You can only record a settlement you are a part of';
+  end if;
+  if p_from_user = p_to_user then
+    raise exception 'A settlement needs two different people';
+  end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'Amount must be greater than zero';
+  end if;
+  if not (is_split_group_member_check(p_group_id, p_from_user) and is_split_group_member_check(p_group_id, p_to_user)) then
+    raise exception 'Both people must be members of this split group';
+  end if;
+
+  select household_id into v_household_id from split_groups where id = p_group_id;
+
+  insert into split_settlements (group_id, household_id, from_user, to_user, amount, method, recorded_by, comment)
+    values (p_group_id, v_household_id, p_from_user, p_to_user, p_amount, p_method, auth.uid(), p_comment)
+    returning id into v_settlement_id;
+
+  select coalesce(nullif(name, ''), split_part(email, '@', 1)) into v_from_name from profiles where id = p_from_user;
+  select coalesce(nullif(name, ''), split_part(email, '@', 1)) into v_to_name from profiles where id = p_to_user;
+
+  insert into household_activity (household_id, actor_user_id, kind, payload)
+    values (
+      v_household_id, auth.uid(), 'settlement_recorded',
+      jsonb_build_object(
+        'settlement_id', v_settlement_id, 'from_user', p_from_user, 'to_user', p_to_user,
+        'from_name', coalesce(v_from_name, 'Someone'), 'to_name', coalesce(v_to_name, 'Someone'), 'amount', p_amount
+      )
+    );
+
+  return jsonb_build_object('ok', true, 'settlement_id', v_settlement_id);
+end;
+$$;
+
+-- Backfill: handle_new_household() only fires for households created AFTER
+-- this migration — every household that already existed needs its default
+-- split group (and membership) created once, here. Safe to re-run: skips
+-- households that already have one.
+do $$
+declare
+  v_household record;
+  v_group_id uuid;
+begin
+  for v_household in select id, owner_id from households where not exists (
+    select 1 from split_groups where household_id = households.id and is_default
+  ) loop
+    insert into split_groups (household_id, name, is_default, created_by)
+      values (v_household.id, 'Household Expenses', true, v_household.owner_id)
+      returning id into v_group_id;
+
+    insert into split_members (group_id, user_id)
+      select v_group_id, user_id from household_members where household_id = v_household.id
+      on conflict do nothing;
+  end loop;
+end $$;

@@ -2,15 +2,15 @@ import { redirect } from "next/navigation";
 import { listMyHouseholds, getHouseholdContext } from "@/lib/actions/household";
 import { getHouseholdSummary } from "@/lib/actions/household-dashboard";
 import { listHouseholdMessages } from "@/lib/actions/household-chat";
+import { getSplitSummary } from "@/lib/actions/split";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/empty-state";
 import { HouseholdSwitcher } from "@/components/household/household-switcher";
 import { InviteMemberDialog } from "@/components/household/invite-member-dialog";
-import { CreateGoalDialog } from "@/components/household/create-goal-dialog";
 import { CreateHouseholdCta } from "@/components/household/create-household-cta";
 import { JoinHouseholdCta } from "@/components/household/join-household-cta";
-import { GoalCard } from "@/components/household/goal-card";
+import { HouseholdFinanceCard } from "@/components/household/finance-toggle";
 import { MemberRow } from "@/components/household/member-row";
 import { ChatPanel } from "@/components/household/chat-panel";
 
@@ -41,10 +41,11 @@ export default async function HouseholdPage({ searchParams }: { searchParams: Pr
   }
 
   const householdId = id && memberships.some((m) => m.household.id === id) ? id : memberships[0].household.id;
-  const [context, summary, messages] = await Promise.all([
+  const [context, summary, messages, splitSummary] = await Promise.all([
     getHouseholdContext(householdId),
     getHouseholdSummary(householdId),
     listHouseholdMessages(householdId),
+    getSplitSummary(householdId),
   ]);
 
   if (!context || !summary) redirect(`/household?id=${memberships[0].household.id}`);
@@ -69,7 +70,6 @@ export default async function HouseholdPage({ searchParams }: { searchParams: Pr
         <div className="flex flex-wrap items-center gap-2">
           <HouseholdSwitcher households={memberships} currentId={householdId} />
           <InviteMemberDialog householdId={householdId} canInvite={canInvite} />
-          <CreateGoalDialog householdId={householdId} />
         </div>
       </div>
 
@@ -87,24 +87,14 @@ export default async function HouseholdPage({ searchParams }: { searchParams: Pr
 
           <div className="grid gap-5 md:grid-cols-2">
             <div className="space-y-5">
-              <Card className="p-5">
-                <CardHeader className="flex-row items-baseline p-0">
-                  <h3 className="text-[17px] font-semibold tracking-tight">Savings Goals</h3>
-                </CardHeader>
-                <CardContent className="mt-3 space-y-3 p-0">
-                  {activeGoals.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No goals yet — create one to start saving toward something together.</p>
-                  ) : (
-                    activeGoals.map((g) => (
-                      <GoalCard
-                        key={g.goal.id}
-                        summary={g}
-                        canDelete={isOwner || g.goal.created_by === myUserId}
-                      />
-                    ))
-                  )}
-                </CardContent>
-              </Card>
+              <HouseholdFinanceCard
+                householdId={householdId}
+                activeGoals={activeGoals}
+                isOwner={isOwner}
+                myUserId={myUserId ?? ""}
+                splitSummary={splitSummary}
+                members={context.members.map((m) => ({ userId: m.userId, name: m.name, avatarUrl: m.avatarUrl }))}
+              />
 
               <Card className="p-5">
                 <CardHeader className="flex-row items-baseline p-0">

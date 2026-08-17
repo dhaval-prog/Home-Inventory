@@ -49,6 +49,22 @@ function describeActivity(kind: string, actorName: string, payload: Record<strin
     }
     case "member_joined":
       return `${actorName} joined the household`;
+    case "expense_added": {
+      const description = typeof payload.description === "string" ? payload.description : "an expense";
+      const amount = typeof payload.amount === "number" ? payload.amount : 0;
+      const payerName = typeof payload.payer_name === "string" ? payload.payer_name : actorName;
+      return `${payerName} paid ₹${Math.round(amount).toLocaleString("en-IN")} for "${description}"`;
+    }
+    case "expense_deleted": {
+      const description = typeof payload.description === "string" ? payload.description : "an expense";
+      return `${actorName} deleted the "${description}" expense`;
+    }
+    case "settlement_recorded": {
+      const amount = typeof payload.amount === "number" ? payload.amount : 0;
+      const fromName = typeof payload.from_name === "string" ? payload.from_name : "Someone";
+      const toName = typeof payload.to_name === "string" ? payload.to_name : "Someone";
+      return `${fromName} paid ${toName} ₹${Math.round(amount).toLocaleString("en-IN")}`;
+    }
     default:
       return `${actorName} updated the household`;
   }

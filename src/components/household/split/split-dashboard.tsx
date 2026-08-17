@@ -1,0 +1,94 @@
+"use client";
+
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { BalancesSheet } from "@/components/household/split/balances-sheet";
+import { ExpenseDetailDialog } from "@/components/household/split/expense-detail-dialog";
+import type { SplitSummary } from "@/lib/actions/split";
+import type { HouseholdMemberLite } from "@/components/household/finance-toggle";
+
+function inr(n: number): string {
+  return `₹${Math.round(n).toLocaleString("en-IN")}`;
+}
+
+/** "You owe / You are owed / Net", recent expenses, and entry points into Balances (+ Simplify) and each expense's detail — deliberately plain language throughout, no ledger/accounting terms, per spec §3/§19. */
+export function SplitDashboard({
+  householdId,
+  summary,
+  members,
+}: {
+  householdId: string;
+  summary: SplitSummary;
+  members: HouseholdMemberLite[];
+}) {
+  const [balancesOpen, setBalancesOpen] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-xl bg-destructive/10 p-3">
+          <p className="text-xs text-muted-foreground">You owe</p>
+          <p className="mt-0.5 text-lg font-semibold text-destructive">{inr(summary.youOwe)}</p>
+        </div>
+        <div className="rounded-xl bg-emerald-500/10 p-3">
+          <p className="text-xs text-muted-foreground">You are owed</p>
+          <p className="mt-0.5 text-lg font-semibold text-emerald-600">{inr(summary.youAreOwed)}</p>
+        </div>
+        <div className="rounded-xl bg-muted p-3">
+          <p className="text-xs text-muted-foreground">Net</p>
+          <p className={`mt-0.5 text-lg font-semibold ${summary.net >= 0 ? "text-emerald-600" : "text-destructive"}`}>
+            {summary.net >= 0 ? "+" : "-"}
+            {inr(Math.abs(summary.net))}
+          </p>
+        </div>
+      </div>
+
+      <Button size="sm" variant="outline" className="w-full" onClick={() => setBalancesOpen(true)}>
+        Balances
+      </Button>
+
+      <div>
+        <p className="mb-2 text-sm font-medium">Recent Expenses</p>
+        {summary.recentExpenses.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No expenses yet — add one to start splitting.</p>
+        ) : (
+          <ul className="space-y-2">
+            {summary.recentExpenses.map((e) => (
+              <li key={e.id}>
+                <button
+                  onClick={() => setDetailId(e.id)}
+                  className="w-full rounded-xl border bg-card p-3 text-left transition hover:shadow-sm"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{e.description}</span>
+                    <span className="font-medium">{inr(e.amount)}</span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
+                    <span>
+                      {e.payerName} paid · {e.participantCount} {e.participantCount === 1 ? "person" : "people"}
+                    </span>
+                    <span className={e.settled ? "text-emerald-600" : ""}>{e.settled ? "Settled" : "Pending"}</span>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <BalancesSheet householdId={householdId} open={balancesOpen} onOpenChange={setBalancesOpen} memberBalances={summary.memberBalances} />
+
+      {detailId && (
+        <ExpenseDetailDialog
+          expenseId={detailId}
+          open={!!detailId}
+          onOpenChange={(v) => {
+            if (!v) setDetailId(null);
+          }}
+          members={members}
+        />
+      )}
+    </div>
+  );
+}

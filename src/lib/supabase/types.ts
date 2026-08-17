@@ -250,6 +250,78 @@ export type HouseholdChatMessageRead = {
   seen_at: string;
 };
 
+/**
+ * Let's Split — shared-expense splitting, deliberately separate from
+ * household_vaults/household_goals (savings). A household always has one
+ * default SplitGroup ("Household Expenses"), membership auto-synced to
+ * household_members; the tables also support additional named groups (a
+ * future UI layer), which is why every row still carries a group_id.
+ */
+export type SplitGroup = {
+  id: string;
+  household_id: string;
+  name: string;
+  is_default: boolean;
+  created_by: string;
+  created_at: string;
+};
+
+export type SplitMember = {
+  group_id: string;
+  user_id: string;
+  joined_at: string;
+};
+
+export type SplitShareType = "equal" | "exact" | "percentage" | "shares";
+
+export type SplitExpense = {
+  id: string;
+  group_id: string;
+  household_id: string;
+  created_by: string;
+  description: string;
+  amount: number;
+  category: string | null;
+  paid_by: string;
+  expense_date: string;
+  comment: string | null;
+  receipt_url: string | null;
+  split_method: SplitShareType;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * One participant's share of one expense. owed_amount always sums to the
+ * expense's amount across all participants (enforced server-side in
+ * record_split_expense/update_split_expense) — a participant's net position
+ * is (paid_by === user_id ? amount : 0) - owed_amount.
+ */
+export type SplitExpenseParticipant = {
+  expense_id: string;
+  user_id: string;
+  share_type: SplitShareType;
+  share_value: number | null;
+  owed_amount: number;
+};
+
+export type SplitSettlementMethod = "cash" | "bank_transfer" | "upi" | "other";
+
+/** A record of money that changed hands outside the app — never a payment integration. */
+export type SplitSettlement = {
+  id: string;
+  group_id: string;
+  household_id: string;
+  from_user: string;
+  to_user: string;
+  amount: number;
+  method: SplitSettlementMethod;
+  recorded_by: string;
+  comment: string | null;
+  settled_at: string;
+  created_at: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -377,6 +449,57 @@ export type Database = {
         Update: Partial<HouseholdChatMessageRead>;
         Relationships: [];
       };
+      split_groups: {
+        Row: SplitGroup;
+        Insert: Partial<SplitGroup> & { household_id: string; name: string; created_by: string };
+        Update: Partial<SplitGroup>;
+        Relationships: [];
+      };
+      split_members: {
+        Row: SplitMember;
+        Insert: Partial<SplitMember> & { group_id: string; user_id: string };
+        Update: Partial<SplitMember>;
+        Relationships: [];
+      };
+      split_expenses: {
+        Row: SplitExpense;
+        Insert: Partial<SplitExpense> & {
+          group_id: string;
+          household_id: string;
+          created_by: string;
+          description: string;
+          amount: number;
+          paid_by: string;
+          split_method: SplitShareType;
+        };
+        Update: Partial<SplitExpense>;
+        Relationships: [];
+      };
+      split_expense_participants: {
+        Row: SplitExpenseParticipant;
+        Insert: Partial<SplitExpenseParticipant> & {
+          expense_id: string;
+          user_id: string;
+          share_type: SplitShareType;
+          owed_amount: number;
+        };
+        Update: Partial<SplitExpenseParticipant>;
+        Relationships: [];
+      };
+      split_settlements: {
+        Row: SplitSettlement;
+        Insert: Partial<SplitSettlement> & {
+          group_id: string;
+          household_id: string;
+          from_user: string;
+          to_user: string;
+          amount: number;
+          method: SplitSettlementMethod;
+          recorded_by: string;
+        };
+        Update: Partial<SplitSettlement>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -406,6 +529,49 @@ export type Database = {
       mark_household_chat_seen: {
         Args: { p_household_id: string };
         Returns: void;
+      };
+      record_split_expense: {
+        Args: {
+          p_group_id: string;
+          p_description: string;
+          p_amount: number;
+          p_category: string | null;
+          p_paid_by: string;
+          p_expense_date: string | null;
+          p_comment: string | null;
+          p_split_method: SplitShareType;
+          p_participants: { user_id: string; share_type: SplitShareType; share_value: number | null; owed_amount: number }[];
+        };
+        Returns: { ok: boolean; expense_id: string };
+      };
+      update_split_expense: {
+        Args: {
+          p_expense_id: string;
+          p_description: string;
+          p_amount: number;
+          p_category: string | null;
+          p_paid_by: string;
+          p_expense_date: string | null;
+          p_comment: string | null;
+          p_split_method: SplitShareType;
+          p_participants: { user_id: string; share_type: SplitShareType; share_value: number | null; owed_amount: number }[];
+        };
+        Returns: { ok: boolean };
+      };
+      delete_split_expense: {
+        Args: { p_expense_id: string };
+        Returns: { ok: boolean };
+      };
+      record_split_settlement: {
+        Args: {
+          p_group_id: string;
+          p_from_user: string;
+          p_to_user: string;
+          p_amount: number;
+          p_method: SplitSettlementMethod;
+          p_comment: string | null;
+        };
+        Returns: { ok: boolean; settlement_id: string };
       };
     };
     Enums: Record<string, never>;
