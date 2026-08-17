@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { listMyHouseholds, getHouseholdContext } from "@/lib/actions/household";
 import { getHouseholdSummary } from "@/lib/actions/household-dashboard";
 import { listHouseholdMessages } from "@/lib/actions/household-chat";
-import { getSplitSummary } from "@/lib/actions/split";
+import { getSplitSummary, getSplitGroupMembers, getSplitActivity, getDefaultGroupId } from "@/lib/actions/split";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -11,6 +11,7 @@ import { InviteMemberDialog } from "@/components/household/invite-member-dialog"
 import { CreateHouseholdCta } from "@/components/household/create-household-cta";
 import { JoinHouseholdCta } from "@/components/household/join-household-cta";
 import { HouseholdFinanceCard } from "@/components/household/finance-toggle";
+import { SplitOnlyWorkspace } from "@/components/household/split/split-only-workspace";
 import { MemberRow } from "@/components/household/member-row";
 import { ChatPanel } from "@/components/household/chat-panel";
 
@@ -41,14 +42,39 @@ export default async function HouseholdPage({ searchParams }: { searchParams: Pr
   }
 
   const householdId = id && memberships.some((m) => m.household.id === id) ? id : memberships[0].household.id;
-  const [context, summary, messages, splitSummary] = await Promise.all([
-    getHouseholdContext(householdId),
+  const context = await getHouseholdContext(householdId);
+  if (!context) redirect(`/household?id=${memberships[0].household.id}`);
+
+  // A split_only member gets SPLIT_ACCESS only (see has_home_access() in
+  // supabase/schema.sql) — a completely different, narrower page, not the
+  // normal dashboard with cards hidden. It never even requests household
+  // savings/goals/members/activity data, so there's nothing to leak.
+  if (context.myRole === "split_only") {
+    const groupId = await getDefaultGroupId(householdId);
+    const [splitSummary, splitMembers, activity] = await Promise.all([
+      getSplitSummary(householdId),
+      groupId ? getSplitGroupMembers(groupId) : Promise.resolve([]),
+      getSplitActivity(householdId),
+    ]);
+    return (
+      <SplitOnlyWorkspace
+        householdId={householdId}
+        householdName={context.household.name}
+        splitSummary={splitSummary}
+        members={splitMembers}
+        activity={activity}
+        households={memberships}
+      />
+    );
+  }
+
+  const [summary, messages, splitSummary] = await Promise.all([
     getHouseholdSummary(householdId),
     listHouseholdMessages(householdId),
     getSplitSummary(householdId),
   ]);
 
-  if (!context || !summary) redirect(`/household?id=${memberships[0].household.id}`);
+  if (!summary) redirect(`/household?id=${memberships[0].household.id}`);
 
   const isOwner = context.myRole === "owner";
   const canInvite = context.myRole === "owner" || context.myRole === "co_owner";

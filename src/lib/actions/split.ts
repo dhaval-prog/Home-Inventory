@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { displayName } from "@/lib/utils";
 import { getHouseholdContext } from "@/lib/actions/household";
+import { describeActivity } from "@/lib/household-activity-messages";
 import { computeSplit, simplifyDebts, type SplitParticipantInput, type SimplifiedTransfer } from "@/lib/split/split-math";
 import type { SplitExpense, SplitExpenseParticipant, SplitSettlement, SplitShareType, SplitSettlementMethod } from "@/lib/supabase/types";
 
@@ -108,6 +110,66 @@ export async function getDefaultGroupId(householdId: string): Promise<string | n
   return data?.id ?? null;
 }
 
+export interface SplitGroupMemberInfo {
+  userId: string;
+  name: string;
+  avatarUrl: string | null;
+}
+
+/**
+ * The split group's own membership + display names — deliberately NOT
+ * sourced from getHouseholdContext()/household_members, which a split_only
+ * member (SPLIT_ACCESS but not HOME_ACCESS — see has_home_access() in
+ * supabase/schema.sql) can no longer see the full roster of. split_members
+ * is scoped to is_split_group_member() instead, so this works the same for
+ * every group member regardless of their household-wide role.
+ */
+export async function getSplitGroupMembers(groupId: string): Promise<SplitGroupMemberInfo[]> {
+  const supabase = await createClient();
+  const { data: members } = await supabase.from("split_members").select("user_id").eq("group_id", groupId);
+  const userIds = (members ?? []).map((m) => m.user_id);
+  if (userIds.length === 0) return [];
+
+  const { data: profiles } = await supabase.from("profiles").select("*").in("id", userIds);
+  const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
+  return userIds.map((id) => ({ userId: id, name: displayName(profileById.get(id)), avatarUrl: profileById.get(id)?.avatar_url ?? null }));
+}
+
+export interface SplitActivityEntry {
+  id: string;
+  actorName: string;
+  message: string;
+  createdAt: string;
+}
+
+/**
+ * The expense/settlement-only slice of household_activity — the one feed a
+ * split_only member (SPLIT_ACCESS but not HOME_ACCESS) can see, via the
+ * household_activity_select_split_activity RLS policy. Filters client-side
+ * too, so a full-access caller using the split workspace doesn't see
+ * goal/contribution noise mixed in here either — this feed is scoped by
+ * kind for everyone, not just by what RLS happens to allow a given role.
+ */
+export async function getSplitActivity(householdId: string): Promise<SplitActivityEntry[]> {
+  const supabase = await createClient();
+  const groupId = await getDefaultGroupId(householdId);
+  if (!groupId) return [];
+
+  const [splitMembers, { data: activityRows }] = await Promise.all([
+    getSplitGroupMembers(groupId),
+    supabase.from("household_activity").select("*").eq("household_id", householdId).order("created_at", { ascending: false }).limit(20),
+  ]);
+
+  const nameByActor = new Map(splitMembers.map((m) => [m.userId, m.name]));
+  const splitKinds = new Set(["expense_added", "expense_deleted", "settlement_recorded"]);
+  return (activityRows ?? [])
+    .filter((a) => splitKinds.has(a.kind))
+    .map((a) => {
+      const actorName = nameByActor.get(a.actor_user_id) ?? "Someone";
+      return { id: a.id, actorName, message: describeActivity(a.kind, actorName, a.payload), createdAt: a.created_at };
+    });
+}
+
 // ─────────────────────────────────────────────────────────────
 // Balance derivation — pure functions over raw rows, no DB access, so the
 // same math backs getSplitSummary, getSimplifiedBalances, and (in tests)
@@ -173,12 +235,15 @@ export async function getSplitSummary(householdId: string): Promise<SplitSummary
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [context, groupId] = await Promise.all([getHouseholdContext(householdId), getDefaultGroupId(householdId)]);
-  if (!context || !groupId) return null;
+  const context = await getHouseholdContext(householdId);
+  if (!context) return null;
+  const groupId = await getDefaultGroupId(householdId);
+  if (!groupId) return null;
 
-  const [{ data: expenses }, { data: settlements }] = await Promise.all([
+  const [{ data: expenses }, { data: settlements }, splitMembers] = await Promise.all([
     supabase.from("split_expenses").select("*").eq("group_id", groupId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }),
     supabase.from("split_settlements").select("*").eq("group_id", groupId),
+    getSplitGroupMembers(groupId),
   ]);
 
   const expenseRows = expenses ?? [];
@@ -202,9 +267,9 @@ export async function getSplitSummary(householdId: string): Promise<SplitSummary
   }
 
   const owes = buildOwesMap(expenseRows, participantsByExpense, settlementRows);
-  const memberIds = context.members.map((m) => m.userId);
-  const nameById = new Map(context.members.map((m) => [m.userId, m.name]));
-  const avatarById = new Map(context.members.map((m) => [m.userId, m.avatarUrl]));
+  const memberIds = splitMembers.map((m) => m.userId);
+  const nameById = new Map(splitMembers.map((m) => [m.userId, m.name]));
+  const avatarById = new Map(splitMembers.map((m) => [m.userId, m.avatarUrl]));
 
   const memberBalances: SplitMemberBalance[] = memberIds
     .filter((id) => id !== user.id)
@@ -247,12 +312,13 @@ export async function getSplitSummary(householdId: string): Promise<SplitSummary
 
 export async function getSimplifiedBalances(householdId: string): Promise<SimplifiedTransferWithNames[]> {
   const supabase = await createClient();
-  const [context, groupId] = await Promise.all([getHouseholdContext(householdId), getDefaultGroupId(householdId)]);
-  if (!context || !groupId) return [];
+  const groupId = await getDefaultGroupId(householdId);
+  if (!groupId) return [];
 
-  const [{ data: expenses }, { data: settlements }] = await Promise.all([
+  const [{ data: expenses }, { data: settlements }, splitMembers] = await Promise.all([
     supabase.from("split_expenses").select("*").eq("group_id", groupId),
     supabase.from("split_settlements").select("*").eq("group_id", groupId),
+    getSplitGroupMembers(groupId),
   ]);
   const expenseRows = expenses ?? [];
   const { data: participants } = expenseRows.length
@@ -273,8 +339,8 @@ export async function getSimplifiedBalances(householdId: string): Promise<Simpli
   }
 
   const owes = buildOwesMap(expenseRows, participantsByExpense, settlements ?? []);
-  const memberIds = context.members.map((m) => m.userId);
-  const nameById = new Map(context.members.map((m) => [m.userId, m.name]));
+  const memberIds = splitMembers.map((m) => m.userId);
+  const nameById = new Map(splitMembers.map((m) => [m.userId, m.name]));
 
   const net = overallNetByUser(owes, memberIds);
   const transfers = simplifyDebts(net);
@@ -291,13 +357,14 @@ export async function getExpenseDetail(expenseId: string): Promise<SplitExpenseD
   const { data: expense } = await supabase.from("split_expenses").select("*").eq("id", expenseId).maybeSingle();
   if (!expense) return null;
 
-  const [context, { data: participants }] = await Promise.all([
+  const [context, splitMembers, { data: participants }] = await Promise.all([
     getHouseholdContext(expense.household_id),
+    getSplitGroupMembers(expense.group_id),
     supabase.from("split_expense_participants").select("*").eq("expense_id", expenseId),
   ]);
   if (!context) return null;
 
-  const nameById = new Map(context.members.map((m) => [m.userId, m.name]));
+  const nameById = new Map(splitMembers.map((m) => [m.userId, m.name]));
   const isOwner = context.myRole === "owner";
 
   return {

@@ -13,6 +13,11 @@ const ROLE_OPTIONS: { value: HouseholdInviteRole; label: string; description: st
   { value: "member", label: "Member", description: "Can contribute, create goals, and use the household chat." },
   { value: "viewer", label: "Viewer", description: "Can see shared savings and goals, but can't change anything." },
   { value: "limited_member", label: "Limited Member", description: "For kids or restricted access — personal vault + limited visibility." },
+  {
+    value: "split_only",
+    label: "Split Only",
+    description: "Only sees Let's Split — shared expenses, balances, and settlements. No access to household savings, goals, members, or chat.",
+  },
 ];
 
 /**

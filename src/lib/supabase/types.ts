@@ -122,15 +122,18 @@ export type VaultRecurringPlan = {
  * and separate from the caller's role in any OTHER household (see
  * household_members: one row per household/user pair). Enforced by RLS
  * (is_household_member/is_household_owner/can_invite_to_household/
- * can_contribute_to_household in supabase/schema.sql), never trusted from
- * the client alone. `co_owner` is granted only by the owner promoting an
- * existing member (updateMemberRole) — it's never a directly invitable role,
- * see HouseholdInviteRole below.
+ * can_contribute_to_household/has_home_access in supabase/schema.sql), never
+ * trusted from the client alone. `co_owner` is granted only by the owner
+ * promoting an existing member (updateMemberRole) — it's never a directly
+ * invitable role, see HouseholdInviteRole below. `split_only` is the one role
+ * that gets SPLIT_ACCESS (Let's Split) without HOME_ACCESS/SAVINGS_ACCESS to
+ * the rest of the household — see has_home_access() and
+ * src/components/household/split/split-only-workspace.tsx.
  */
-export type HouseholdRole = "owner" | "co_owner" | "member" | "viewer" | "limited_member";
+export type HouseholdRole = "owner" | "co_owner" | "member" | "viewer" | "limited_member" | "split_only";
 
 /** Roles a household invite can grant directly — co_owner is promotion-only, never invited into directly. */
-export type HouseholdInviteRole = "member" | "viewer" | "limited_member";
+export type HouseholdInviteRole = "member" | "viewer" | "limited_member" | "split_only";
 
 /** private = owner only, selected = specific members, home = every member. */
 export type HouseholdVisibility = "private" | "selected" | "home";

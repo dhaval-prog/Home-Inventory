@@ -302,30 +302,37 @@ create table if not exists public.household_members (
   id uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households (id) on delete cascade,
   user_id uuid not null references auth.users (id) on delete cascade,
-  role text not null check (role in ('owner', 'co_owner', 'member', 'viewer', 'limited_member')),
+  role text not null check (role in ('owner', 'co_owner', 'member', 'viewer', 'limited_member', 'split_only')),
   joined_at timestamptz not null default now(),
   unique (household_id, user_id)
 );
 create index if not exists household_members_household_id_idx on public.household_members (household_id);
 create index if not exists household_members_user_id_idx on public.household_members (user_id);
 
--- widen an existing install's role check to allow co_owner (promoted by the
--- owner via updateMemberRole — never directly invitable, see household_invites'
--- own role check below, which is deliberately NOT widened).
+-- widen an existing install's role check to allow co_owner/split_only.
+-- split_only is directly invitable (see household_invites' own role check
+-- below, unlike co_owner which is promotion-only) — it's the one role that
+-- gets SPLIT_ACCESS to Let's Split without HOME_ACCESS/SAVINGS_ACCESS to the
+-- rest of the household (see has_home_access() below).
 alter table public.household_members drop constraint if exists household_members_role_check;
 alter table public.household_members add constraint household_members_role_check
-  check (role in ('owner', 'co_owner', 'member', 'viewer', 'limited_member'));
+  check (role in ('owner', 'co_owner', 'member', 'viewer', 'limited_member', 'split_only'));
 
 create table if not exists public.household_invites (
   id uuid primary key default gen_random_uuid(),
   household_id uuid not null references public.households (id) on delete cascade,
   token text not null unique,
   created_by uuid not null references auth.users (id) on delete cascade,
-  role text not null check (role in ('member', 'viewer', 'limited_member')),
+  role text not null check (role in ('member', 'viewer', 'limited_member', 'split_only')),
   status text not null default 'pending' check (status in ('pending', 'accepted', 'revoked', 'expired')),
   expires_at timestamptz not null default (now() + interval '7 days'),
   created_at timestamptz not null default now()
 );
+
+-- widen an existing install's invite-role check to allow split_only.
+alter table public.household_invites drop constraint if exists household_invites_role_check;
+alter table public.household_invites add constraint household_invites_role_check
+  check (role in ('member', 'viewer', 'limited_member', 'split_only'));
 create index if not exists household_invites_household_id_idx on public.household_invites (household_id);
 
 -- Container for a pooled sum of money — every household gets exactly one
@@ -445,6 +452,26 @@ as $$
   select exists (
     select 1 from household_members
     where household_id = p_household_id and user_id = auth.uid() and role in ('owner', 'co_owner')
+  );
+$$;
+
+-- SPLIT_ACCESS vs HOME_ACCESS/SAVINGS_ACCESS (see the permission-scope model
+-- in the app spec): a split_only member is a real household_members row (so
+-- Let's Split's default-group sync trigger below still adds them to it), but
+-- gets none of the household's other visibility — household_goals,
+-- household_vaults, household_vault_transactions, household_chat, the full
+-- household_members roster, and household_invites all gate on this instead
+-- of the plain is_household_member() they used before. household_activity is
+-- the one exception: split_only members still see expense/settlement rows
+-- there (see household_activity_select_split_activity below), just not
+-- goal/contribution ones.
+create or replace function public.has_home_access(p_household_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from household_members
+    where household_id = p_household_id and user_id = auth.uid() and role != 'split_only'
   );
 $$;
 
@@ -673,9 +700,16 @@ drop policy if exists "households_delete_owner" on public.households;
 create policy "households_delete_owner" on public.households for delete
   using (owner_id = auth.uid());
 
+-- Full roster (with roles) is HOME_ACCESS-gated — a split_only member sees
+-- only their own row here (household_members_select_self below), never the
+-- rest of the household. That still lets getHouseholdContext() resolve
+-- "what's MY role" for them without leaking anyone else's.
 drop policy if exists "household_members_select_member" on public.household_members;
 create policy "household_members_select_member" on public.household_members for select
-  using (is_household_member(household_id));
+  using (has_home_access(household_id));
+drop policy if exists "household_members_select_self" on public.household_members;
+create policy "household_members_select_self" on public.household_members for select
+  using (user_id = auth.uid());
 drop policy if exists "household_members_insert_self" on public.household_members;
 create policy "household_members_insert_self" on public.household_members for insert
   with check (user_id = auth.uid());
@@ -706,7 +740,7 @@ create policy "profiles_select_household_members" on public.profiles for select
 
 drop policy if exists "household_invites_select_member" on public.household_invites;
 create policy "household_invites_select_member" on public.household_invites for select
-  using (is_household_member(household_id));
+  using (has_home_access(household_id));
 -- Owner or co-owner may generate an invite — see can_invite_to_household()
 -- above. This is the real permission gate; generateInvite()/InviteMemberDialog
 -- only ever hide the UI for everyone else.
@@ -721,7 +755,7 @@ create policy "household_invites_update_inviter" on public.household_invites for
 
 drop policy if exists "household_vaults_select_member" on public.household_vaults;
 create policy "household_vaults_select_member" on public.household_vaults for select
-  using (is_household_member(household_id));
+  using (has_home_access(household_id));
 drop policy if exists "household_vaults_insert_goal" on public.household_vaults;
 create policy "household_vaults_insert_goal" on public.household_vaults for insert
   with check (vault_type = 'goal' and can_contribute_to_household(household_id) and created_by = auth.uid());
@@ -737,7 +771,7 @@ create policy "household_vaults_delete_owner_or_creator" on public.household_vau
 
 drop policy if exists "household_goals_select_member" on public.household_goals;
 create policy "household_goals_select_member" on public.household_goals for select
-  using (is_household_member(household_id));
+  using (has_home_access(household_id));
 drop policy if exists "household_goals_insert_contributor" on public.household_goals;
 create policy "household_goals_insert_contributor" on public.household_goals for insert
   with check (can_contribute_to_household(household_id) and created_by = auth.uid());
@@ -752,14 +786,21 @@ create policy "household_goals_delete_owner_or_creator" on public.household_goal
 
 drop policy if exists "household_vault_txns_select_member" on public.household_vault_transactions;
 create policy "household_vault_txns_select_member" on public.household_vault_transactions for select
-  using (is_household_member(household_id));
+  using (has_home_access(household_id));
 drop policy if exists "household_vault_txns_insert_contributor" on public.household_vault_transactions;
 create policy "household_vault_txns_insert_contributor" on public.household_vault_transactions for insert
   with check (can_contribute_to_household(household_id) and user_id = auth.uid());
 
 drop policy if exists "household_activity_select_member" on public.household_activity;
 create policy "household_activity_select_member" on public.household_activity for select
-  using (is_household_member(household_id));
+  using (has_home_access(household_id));
+-- A split_only member doesn't get has_home_access, but still needs to see
+-- expense/settlement activity for their own split group — this additive
+-- policy (OR'd with the one above) opens exactly those kinds, never
+-- goal/contribution/member-joined ones, to every household member.
+drop policy if exists "household_activity_select_split_activity" on public.household_activity;
+create policy "household_activity_select_split_activity" on public.household_activity for select
+  using (kind in ('expense_added', 'expense_deleted', 'settlement_recorded') and is_household_member(household_id));
 drop policy if exists "household_activity_insert_member" on public.household_activity;
 create policy "household_activity_insert_member" on public.household_activity for insert
   with check (is_household_member(household_id) and actor_user_id = auth.uid());
@@ -787,12 +828,16 @@ create index if not exists household_chat_messages_household_created_idx
 
 alter table public.household_chat_messages enable row level security;
 
+-- Home Chat surfaces goal suggestions/contribution talk, so it's
+-- HOME_ACCESS-gated like the rest of the household dashboard — a split_only
+-- member gets no Home Chat for now (spec's "Split group chat" is a separate,
+-- not-yet-built, group-scoped surface).
 drop policy if exists "household_chat_select_member" on public.household_chat_messages;
 create policy "household_chat_select_member" on public.household_chat_messages for select
-  using (is_household_member(household_id));
+  using (has_home_access(household_id));
 drop policy if exists "household_chat_insert_member" on public.household_chat_messages;
 create policy "household_chat_insert_member" on public.household_chat_messages for insert
-  with check (is_household_member(household_id) and user_id = auth.uid());
+  with check (has_home_access(household_id) and user_id = auth.uid());
 
 -- Sent/edited timestamps + per-member read receipts, so a message can show
 -- "sent at" / "seen at", and the sender can edit or delete their own message
@@ -815,7 +860,7 @@ drop policy if exists "household_chat_message_reads_select_member" on public.hou
 create policy "household_chat_message_reads_select_member" on public.household_chat_message_reads for select
   using (exists (
     select 1 from household_chat_messages m
-    where m.id = message_id and is_household_member(m.household_id)
+    where m.id = message_id and has_home_access(m.household_id)
   ));
 drop policy if exists "household_chat_message_reads_insert_own" on public.household_chat_message_reads;
 create policy "household_chat_message_reads_insert_own" on public.household_chat_message_reads for insert
@@ -823,7 +868,7 @@ create policy "household_chat_message_reads_insert_own" on public.household_chat
     user_id = auth.uid()
     and exists (
       select 1 from household_chat_messages m
-      where m.id = message_id and is_household_member(m.household_id)
+      where m.id = message_id and has_home_access(m.household_id)
     )
   );
 
