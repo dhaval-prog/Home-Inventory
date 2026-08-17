@@ -325,6 +325,28 @@ export type SplitSettlement = {
   created_at: string;
 };
 
+export type SplitChatMessageKind = "user" | "system";
+
+/**
+ * Split Chat — scoped to one split group, not a household. SPLIT_CHAT_ACCESS
+ * (is_split_group_member(group_id) in supabase/schema.sql) is independent of
+ * HOME_CHAT_ACCESS (household_chat_messages/has_home_access): a split_only
+ * member gets this without Home Chat, and a household member only gets a
+ * given group's chat if they actually belong to that group.
+ */
+export type SplitChatMessage = {
+  id: string;
+  group_id: string;
+  household_id: string;
+  user_id: string;
+  message: string;
+  kind: SplitChatMessageKind;
+  /** Rendering hint only — e.g. { type: "suggest_expense", description, amount } — never used to auto-create an expense by itself. */
+  metadata: Record<string, unknown>;
+  edited_at: string | null;
+  created_at: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -503,6 +525,12 @@ export type Database = {
         Update: Partial<SplitSettlement>;
         Relationships: [];
       };
+      split_chat_messages: {
+        Row: SplitChatMessage;
+        Insert: Partial<SplitChatMessage> & { group_id: string; household_id: string; user_id: string; message: string };
+        Update: Partial<SplitChatMessage>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -539,7 +567,6 @@ export type Database = {
           p_description: string;
           p_amount: number;
           p_category: string | null;
-          p_paid_by: string;
           p_expense_date: string | null;
           p_comment: string | null;
           p_split_method: SplitShareType;

@@ -1137,12 +1137,19 @@ create trigger household_members_sync_default_split_group
 -- computed by the caller (src/lib/actions/split.ts) for easier validation
 -- and testing, but this function re-checks sum(owed_amount) = p_amount
 -- server-side regardless — the client's arithmetic is never trusted alone.
+--
+-- p_paid_by is deliberately NOT a parameter: whoever calls Add Expense is
+-- understood to be the payer, so paid_by is always auth.uid() here — a
+-- manipulated client request has no field to override this through. Editing
+-- who paid (e.g. correcting a mistake) is the separate, already
+-- owner/creator-gated update_split_expense() flow below, which keeps its own
+-- explicit p_paid_by.
+drop function if exists public.record_split_expense(uuid, text, numeric, text, uuid, date, text, text, jsonb);
 create or replace function public.record_split_expense(
   p_group_id uuid,
   p_description text,
   p_amount numeric,
   p_category text,
-  p_paid_by uuid,
   p_expense_date date,
   p_comment text,
   p_split_method text,
@@ -1169,9 +1176,6 @@ begin
   if p_amount is null or p_amount <= 0 then
     raise exception 'Amount must be greater than zero';
   end if;
-  if not is_split_group_member_check(p_group_id, p_paid_by) then
-    raise exception 'The payer must be a member of this split group';
-  end if;
 
   select count(*), coalesce(sum((p.value->>'owed_amount')::numeric), 0)
     into v_participant_count, v_sum
@@ -1184,14 +1188,14 @@ begin
   end if;
 
   insert into split_expenses (group_id, household_id, created_by, description, amount, category, paid_by, expense_date, comment, split_method)
-    values (p_group_id, v_household_id, auth.uid(), p_description, p_amount, p_category, p_paid_by, coalesce(p_expense_date, current_date), p_comment, p_split_method)
+    values (p_group_id, v_household_id, auth.uid(), p_description, p_amount, p_category, auth.uid(), coalesce(p_expense_date, current_date), p_comment, p_split_method)
     returning id into v_expense_id;
 
   insert into split_expense_participants (expense_id, user_id, share_type, share_value, owed_amount)
     select v_expense_id, (p.value->>'user_id')::uuid, (p.value->>'share_type')::text, (p.value->>'share_value')::numeric, (p.value->>'owed_amount')::numeric
     from jsonb_array_elements(p_participants) p;
 
-  select coalesce(nullif(name, ''), split_part(email, '@', 1)) into v_payer_name from profiles where id = p_paid_by;
+  select coalesce(nullif(name, ''), split_part(email, '@', 1)) into v_payer_name from profiles where id = auth.uid();
 
   insert into household_activity (household_id, actor_user_id, kind, payload)
     values (
@@ -1354,6 +1358,51 @@ begin
   return jsonb_build_object('ok', true, 'settlement_id', v_settlement_id);
 end;
 $$;
+
+-- ─────────────────────────────────────────────────────────────
+-- Split Chat — a dedicated chat scoped to a Let's Split group, deliberately
+-- separate from Home Chat (household_chat_messages, HOME_CHAT_ACCESS). Its
+-- own permission scope, SPLIT_CHAT_ACCESS, is is_split_group_member(group_id)
+-- — completely independent of has_home_access()/is_household_member(): a
+-- split_only member (SPLIT_ACCESS, no HOME_ACCESS) gets this chat for the
+-- groups they belong to, and conversely a full household member only gets a
+-- group's chat if they're actually a member of THAT group, not merely a
+-- household member. Deliberately simpler than Home Chat: no read-receipt
+-- tracking or seen-locked editing, just sender-owned edit/delete, per spec's
+-- "keep it lightweight and focused."
+-- ─────────────────────────────────────────────────────────────
+create table if not exists public.split_chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.split_groups (id) on delete cascade,
+  household_id uuid not null references public.households (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  message text not null,
+  kind text not null default 'user' check (kind in ('user', 'system')),
+  -- Rendering hint only — e.g. { type: "suggest_expense", description, amount }
+  -- — never used to auto-create an expense by itself; the user must still
+  -- click "Review & Add" and submit the (editable) Add Expense form.
+  metadata jsonb not null default '{}',
+  edited_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists split_chat_messages_group_created_idx
+  on public.split_chat_messages (group_id, created_at desc);
+
+alter table public.split_chat_messages enable row level security;
+
+drop policy if exists "split_chat_select_group_member" on public.split_chat_messages;
+create policy "split_chat_select_group_member" on public.split_chat_messages for select
+  using (is_split_group_member(group_id));
+drop policy if exists "split_chat_insert_group_member" on public.split_chat_messages;
+create policy "split_chat_insert_group_member" on public.split_chat_messages for insert
+  with check (is_split_group_member(group_id) and user_id = auth.uid());
+drop policy if exists "split_chat_update_own" on public.split_chat_messages;
+create policy "split_chat_update_own" on public.split_chat_messages for update
+  using (user_id = auth.uid() and kind = 'user')
+  with check (user_id = auth.uid());
+drop policy if exists "split_chat_delete_own" on public.split_chat_messages;
+create policy "split_chat_delete_own" on public.split_chat_messages for delete
+  using (user_id = auth.uid() and kind = 'user');
 
 -- Backfill: handle_new_household() only fires for households created AFTER
 -- this migration — every household that already existed needs its default

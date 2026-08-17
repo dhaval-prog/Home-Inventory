@@ -20,11 +20,13 @@ export function ExpenseDetailDialog({
   open,
   onOpenChange,
   members,
+  currentUserId,
 }: {
   expenseId: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
   members: HouseholdMemberLite[];
+  currentUserId: string;
 }) {
   const router = useRouter();
   const [detail, setDetail] = useState<SplitExpenseDetail | null>(null);
@@ -60,6 +62,8 @@ export function ExpenseDetailDialog({
           <p className="text-sm text-muted-foreground">This expense couldn&apos;t be found.</p>
         ) : mode === "edit" ? (
           <ExpenseForm
+            mode="edit"
+            currentUserId={currentUserId}
             members={members}
             initialValue={{
               description: detail.description,

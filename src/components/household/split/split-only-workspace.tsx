@@ -21,6 +21,7 @@ import type { HouseholdListEntry } from "@/lib/actions/household";
 export function SplitOnlyWorkspace({
   householdId,
   householdName,
+  currentUserId,
   splitSummary,
   members,
   activity,
@@ -28,6 +29,7 @@ export function SplitOnlyWorkspace({
 }: {
   householdId: string;
   householdName: string;
+  currentUserId: string;
   splitSummary: SplitSummary | null;
   members: HouseholdMemberLite[];
   activity: SplitActivityEntry[];
@@ -44,7 +46,7 @@ export function SplitOnlyWorkspace({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <HouseholdSwitcher households={households} currentId={householdId} />
-          {splitSummary && <AddExpenseDialog householdId={householdId} members={members} />}
+          {splitSummary && <AddExpenseDialog householdId={householdId} members={members} currentUserId={currentUserId} />}
         </div>
       </div>
 
@@ -63,7 +65,7 @@ export function SplitOnlyWorkspace({
             </CardHeader>
             <CardContent className="mt-3 p-0">
               {splitSummary ? (
-                <SplitDashboard householdId={householdId} summary={splitSummary} members={members} />
+                <SplitDashboard householdId={householdId} summary={splitSummary} members={members} currentUserId={currentUserId} />
               ) : (
                 <p className="text-sm text-muted-foreground">Let&apos;s Split isn&apos;t set up for this household yet.</p>
               )}

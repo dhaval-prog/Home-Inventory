@@ -47,9 +47,19 @@ function inr(n: number): string {
  * The one expense form, shared by AddExpenseDialog (create) and
  * ExpenseDetailDialog's edit mode (update) — same fields, same live split
  * preview/validation either way, so the two flows can never drift apart.
+ *
+ * `mode: "create"` hides the Paid By selector entirely — whoever opens Add
+ * Expense is understood to be the payer, so `paidBy` is locked to
+ * `currentUserId` without asking. The backend enforces this too (see
+ * createExpense() in src/lib/actions/split.ts): even a manipulated request
+ * can't override the payer on create. `mode: "edit"` keeps the existing
+ * Paid By selector unchanged — reassigning who paid is a separate,
+ * already owner/creator-gated flow.
  */
 export function ExpenseForm({
   members,
+  mode,
+  currentUserId,
   initialValue,
   submitLabel,
   pending,
@@ -58,6 +68,8 @@ export function ExpenseForm({
   onCancel,
 }: {
   members: HouseholdMemberLite[];
+  mode: "create" | "edit";
+  currentUserId: string;
   initialValue?: Partial<ExpenseFormValue>;
   submitLabel: string;
   pending: boolean;
@@ -68,7 +80,7 @@ export function ExpenseForm({
   const [description, setDescription] = useState(initialValue?.description ?? "");
   const [amount, setAmount] = useState(initialValue?.amount ?? "");
   const [category, setCategory] = useState<string | null>(initialValue?.category ?? null);
-  const [paidBy, setPaidBy] = useState(initialValue?.paidBy ?? members[0]?.userId ?? "");
+  const [paidBy, setPaidBy] = useState(mode === "create" ? currentUserId : (initialValue?.paidBy ?? members[0]?.userId ?? ""));
   const [comment, setComment] = useState(initialValue?.comment ?? "");
   const [splitMethod, setSplitMethod] = useState<SplitShareType>(initialValue?.splitMethod ?? "equal");
   const [participantIds, setParticipantIds] = useState<string[]>(initialValue?.participantIds ?? members.map((m) => m.userId));
@@ -150,24 +162,33 @@ export function ExpenseForm({
         </div>
       </div>
 
-      <div className="space-y-2">
-        <Label>Paid by</Label>
-        <div className="flex flex-wrap gap-1.5">
-          {members.map((m) => (
-            <button
-              key={m.userId}
-              type="button"
-              onClick={() => setPaidBy(m.userId)}
-              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-medium ${paidBy === m.userId ? "border-primary bg-primary/10" : ""}`}
-            >
-              <Avatar size="sm">
-                <AvatarFallback>{initials(m.name)}</AvatarFallback>
-              </Avatar>
-              {m.name}
-            </button>
-          ))}
+      {mode === "edit" ? (
+        <div className="space-y-2">
+          <Label>Paid by</Label>
+          <div className="flex flex-wrap gap-1.5">
+            {members.map((m) => (
+              <button
+                key={m.userId}
+                type="button"
+                onClick={() => setPaidBy(m.userId)}
+                className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-medium ${paidBy === m.userId ? "border-primary bg-primary/10" : ""}`}
+              >
+                <Avatar size="sm">
+                  <AvatarFallback>{initials(m.name)}</AvatarFallback>
+                </Avatar>
+                {m.name}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          <Avatar size="sm">
+            <AvatarFallback>{initials(members.find((m) => m.userId === currentUserId)?.name ?? "You")}</AvatarFallback>
+          </Avatar>
+          Paid by <span className="font-medium text-foreground">You</span>
+        </div>
+      )}
 
       <div className="space-y-2">
         <Label>Split method</Label>

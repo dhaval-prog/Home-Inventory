@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { BalancesSheet } from "@/components/household/split/balances-sheet";
 import { ExpenseDetailDialog } from "@/components/household/split/expense-detail-dialog";
+import { SplitChatButton } from "@/components/household/split/split-chat-button";
 import type { SplitSummary } from "@/lib/actions/split";
 import type { HouseholdMemberLite } from "@/components/household/finance-toggle";
 
@@ -11,15 +12,17 @@ function inr(n: number): string {
   return `₹${Math.round(n).toLocaleString("en-IN")}`;
 }
 
-/** "You owe / You are owed / Net", recent expenses, and entry points into Balances (+ Simplify) and each expense's detail — deliberately plain language throughout, no ledger/accounting terms, per spec §3/§19. */
+/** "You owe / You are owed / Net", recent expenses, and entry points into Balances (+ Simplify), Split Chat, and each expense's detail — deliberately plain language throughout, no ledger/accounting terms, per spec §3/§19. */
 export function SplitDashboard({
   householdId,
   summary,
   members,
+  currentUserId,
 }: {
   householdId: string;
   summary: SplitSummary;
   members: HouseholdMemberLite[];
+  currentUserId: string;
 }) {
   const [balancesOpen, setBalancesOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -44,9 +47,12 @@ export function SplitDashboard({
         </div>
       </div>
 
-      <Button size="sm" variant="outline" className="w-full" onClick={() => setBalancesOpen(true)}>
-        Balances
-      </Button>
+      <div className="grid grid-cols-2 gap-2">
+        <Button size="sm" variant="outline" onClick={() => setBalancesOpen(true)}>
+          Balances
+        </Button>
+        <SplitChatButton householdId={householdId} groupId={summary.groupId} currentUserId={currentUserId} members={members} />
+      </div>
 
       <div>
         <p className="mb-2 text-sm font-medium">Recent Expenses</p>
@@ -87,6 +93,7 @@ export function SplitDashboard({
             if (!v) setDetailId(null);
           }}
           members={members}
+          currentUserId={currentUserId}
         />
       )}
     </div>

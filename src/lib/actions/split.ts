@@ -399,6 +399,12 @@ function toRpcParticipants(split: ReturnType<typeof computeSplit>) {
   return split.map((s) => ({ user_id: s.userId, share_type: s.shareType, share_value: s.shareValue, owed_amount: s.owedAmount }));
 }
 
+/**
+ * input.paidBy is intentionally ignored here — the payer is always whoever
+ * is authenticated and calling this action (see record_split_expense() in
+ * supabase/schema.sql, which doesn't even accept a payer parameter anymore).
+ * A manipulated client request has no field left to override this through.
+ */
 export async function createExpense(householdId: string, input: CreateExpenseInput): Promise<{ expenseId: string } | { error: string }> {
   if (!input.description.trim()) return { error: "Give the expense a description." };
   if (!Number.isFinite(input.amount) || input.amount <= 0) return { error: "Amount must be greater than zero." };
@@ -416,7 +422,6 @@ export async function createExpense(householdId: string, input: CreateExpenseInp
     p_description: input.description.trim(),
     p_amount: input.amount,
     p_category: input.category,
-    p_paid_by: input.paidBy,
     p_expense_date: input.expenseDate ?? null,
     p_comment: input.comment?.trim() || null,
     p_split_method: input.splitMethod,
