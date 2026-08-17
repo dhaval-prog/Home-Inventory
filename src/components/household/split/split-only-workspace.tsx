@@ -65,9 +65,21 @@ export function SplitOnlyWorkspace({
             </CardHeader>
             <CardContent className="mt-3 p-0">
               {splitSummary ? (
-                <SplitDashboard householdId={householdId} summary={splitSummary} members={members} currentUserId={currentUserId} />
+                // A split_only member is never this group's creator or the
+                // household owner (handle_new_household always makes the
+                // household owner the default group's creator) — Invite
+                // Members stays hidden for them, same as any other member.
+                <SplitDashboard
+                  householdId={householdId}
+                  summary={splitSummary}
+                  members={members}
+                  currentUserId={currentUserId}
+                  isOwner={false}
+                />
               ) : (
-                <p className="text-sm text-muted-foreground">Let&apos;s Split isn&apos;t set up for this household yet.</p>
+                <p className="text-sm text-muted-foreground">
+                  You haven&apos;t been added to a split group in this household yet.
+                </p>
               )}
             </CardContent>
           </Card>

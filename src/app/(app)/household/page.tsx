@@ -71,10 +71,12 @@ export default async function HouseholdPage({ searchParams }: { searchParams: Pr
     );
   }
 
-  const [summary, messages, splitSummary] = await Promise.all([
+  const groupId = await getDefaultGroupId(householdId);
+  const [summary, messages, splitSummary, splitGroupMembers] = await Promise.all([
     getHouseholdSummary(householdId),
     listHouseholdMessages(householdId),
     getSplitSummary(householdId),
+    groupId ? getSplitGroupMembers(groupId) : Promise.resolve([]),
   ]);
 
   if (!summary) redirect(`/household?id=${memberships[0].household.id}`);
@@ -124,7 +126,7 @@ export default async function HouseholdPage({ searchParams }: { searchParams: Pr
                   isOwner={isOwner}
                   myUserId={myUserId ?? ""}
                   splitSummary={splitSummary}
-                  members={context.members.map((m) => ({ userId: m.userId, name: m.name, avatarUrl: m.avatarUrl }))}
+                  members={splitGroupMembers}
                 />
 
                 <Card className="p-5">

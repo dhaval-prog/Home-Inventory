@@ -229,6 +229,21 @@ export type HouseholdActivity = {
   payload: Record<string, unknown>;
   visibility: HouseholdVisibility;
   created_at: string;
+  /** Scopes this row to one goal (contribution to a goal vault, goal_created) — gated by that goal's own membership in RLS, not household-wide access. Null for shared-vault/member activity. */
+  goal_id: string | null;
+};
+
+/**
+ * New Goal's own membership — independent of Let's Split (split_members) and
+ * of plain household membership. Being a household member does NOT by
+ * itself grant goal visibility; only an explicit row here does (see
+ * is_goal_member()/household_goals_select_member in supabase/schema.sql).
+ */
+export type HouseholdGoalMember = {
+  goal_id: string;
+  user_id: string;
+  added_by: string;
+  joined_at: string;
 };
 
 export type HouseholdChatMessageKind = "user" | "system";
@@ -342,6 +357,27 @@ export type SplitChatMessage = {
   message: string;
   kind: SplitChatMessageKind;
   /** Rendering hint only — e.g. { type: "suggest_expense", description, amount } — never used to auto-create an expense by itself. */
+  metadata: Record<string, unknown>;
+  edited_at: string | null;
+  created_at: string;
+};
+
+export type HouseholdGoalChatMessageKind = "user" | "system";
+
+/**
+ * Goal Chat — the New Goal mirror of Split Chat: scoped to one goal via
+ * is_goal_member(goal_id), independent of both Split Chat's
+ * is_split_group_member(group_id) and Home Chat's has_home_access(). Never
+ * merged with either — see the CORE RULE in supabase/schema.sql's "Goal
+ * Chat" section.
+ */
+export type HouseholdGoalChatMessage = {
+  id: string;
+  goal_id: string;
+  household_id: string;
+  user_id: string;
+  message: string;
+  kind: HouseholdGoalChatMessageKind;
   metadata: Record<string, unknown>;
   edited_at: string | null;
   created_at: string;
@@ -531,6 +567,18 @@ export type Database = {
         Update: Partial<SplitChatMessage>;
         Relationships: [];
       };
+      household_goal_members: {
+        Row: HouseholdGoalMember;
+        Insert: Partial<HouseholdGoalMember> & { goal_id: string; user_id: string; added_by: string };
+        Update: Partial<HouseholdGoalMember>;
+        Relationships: [];
+      };
+      household_goal_chat_messages: {
+        Row: HouseholdGoalChatMessage;
+        Insert: Partial<HouseholdGoalChatMessage> & { goal_id: string; household_id: string; user_id: string; message: string };
+        Update: Partial<HouseholdGoalChatMessage>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -590,6 +638,22 @@ export type Database = {
       };
       delete_split_expense: {
         Args: { p_expense_id: string };
+        Returns: { ok: boolean };
+      };
+      add_goal_member: {
+        Args: { p_goal_id: string; p_user_id: string };
+        Returns: { ok: boolean };
+      };
+      remove_goal_member: {
+        Args: { p_goal_id: string; p_user_id: string };
+        Returns: { ok: boolean };
+      };
+      add_split_group_member: {
+        Args: { p_group_id: string; p_user_id: string };
+        Returns: { ok: boolean };
+      };
+      remove_split_group_member: {
+        Args: { p_group_id: string; p_user_id: string };
         Returns: { ok: boolean };
       };
       record_split_settlement: {

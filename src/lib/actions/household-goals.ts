@@ -194,9 +194,13 @@ export async function contributeToGoal(
     const total = (txns ?? []).reduce((sum, t) => sum + (t.type === "add" ? t.amount : -t.amount), 0);
     if (total >= goal.target_amount) {
       await supabase.from("household_goals").update({ status: "completed" }).eq("id", goalId);
-      await supabase
-        .from("household_activity")
-        .insert({ household_id: goal.household_id, actor_user_id: user.id, kind: "goal_completed", payload: { goal_id: goalId, name: goal.name } });
+      await supabase.from("household_activity").insert({
+        household_id: goal.household_id,
+        actor_user_id: user.id,
+        kind: "goal_completed",
+        payload: { goal_id: goalId, name: goal.name },
+        goal_id: goalId,
+      });
     }
   }
 

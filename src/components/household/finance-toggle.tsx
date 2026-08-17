@@ -14,6 +14,8 @@ export interface HouseholdMemberLite {
   userId: string;
   name: string;
   avatarUrl: string | null;
+  /** Present when sourced from a group/goal's own membership list (getSplitGroupMembers/listGoalMembers) — absent for the plain household roster. */
+  isCreator?: boolean;
 }
 
 /**
@@ -73,6 +75,7 @@ export function HouseholdFinanceCard({
                   key={g.goal.id}
                   summary={g}
                   canDelete={isOwner || g.goal.created_by === myUserId}
+                  currentUserId={myUserId}
                 />
               ))
             )}
@@ -83,10 +86,11 @@ export function HouseholdFinanceCard({
             summary={splitSummary}
             members={members}
             currentUserId={myUserId}
+            isOwner={isOwner}
           />
         ) : (
           <p className="text-sm text-muted-foreground">
-            Let&apos;s Split isn&apos;t set up for this household yet.
+            You haven&apos;t been added to this household&apos;s split group yet — ask an owner to invite you from inside Let&apos;s Split.
           </p>
         )}
       </div>

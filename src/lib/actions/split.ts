@@ -114,6 +114,7 @@ export interface SplitGroupMemberInfo {
   userId: string;
   name: string;
   avatarUrl: string | null;
+  isCreator: boolean;
 }
 
 /**
@@ -122,17 +123,65 @@ export interface SplitGroupMemberInfo {
  * member (SPLIT_ACCESS but not HOME_ACCESS — see has_home_access() in
  * supabase/schema.sql) can no longer see the full roster of. split_members
  * is scoped to is_split_group_member() instead, so this works the same for
- * every group member regardless of their household-wide role.
+ * every group member regardless of their household-wide role. Membership
+ * here is explicit-only now (see supabase/schema.sql — the old
+ * household-wide auto-sync trigger was removed): only the group's creator
+ * plus whoever's been added via addSplitGroupMember() below.
  */
 export async function getSplitGroupMembers(groupId: string): Promise<SplitGroupMemberInfo[]> {
   const supabase = await createClient();
-  const { data: members } = await supabase.from("split_members").select("user_id").eq("group_id", groupId);
+  const [{ data: group }, { data: members }] = await Promise.all([
+    supabase.from("split_groups").select("created_by").eq("id", groupId).maybeSingle(),
+    supabase.from("split_members").select("user_id").eq("group_id", groupId),
+  ]);
   const userIds = (members ?? []).map((m) => m.user_id);
   if (userIds.length === 0) return [];
 
   const { data: profiles } = await supabase.from("profiles").select("*").in("id", userIds);
   const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
-  return userIds.map((id) => ({ userId: id, name: displayName(profileById.get(id)), avatarUrl: profileById.get(id)?.avatar_url ?? null }));
+  return userIds.map((id) => ({
+    userId: id,
+    name: displayName(profileById.get(id)),
+    avatarUrl: profileById.get(id)?.avatar_url ?? null,
+    isCreator: id === group?.created_by,
+  }));
+}
+
+/**
+ * Household members not yet in this split group — the candidate list for
+ * Let's Split's own "Invite Members" action. Only meaningful for someone who
+ * can already see the full household roster (the group's manager, who by
+ * definition has HOME_ACCESS); a non-manager gets an empty list.
+ */
+export async function listEligibleSplitGroupMembers(groupId: string, householdId: string): Promise<SplitGroupMemberInfo[]> {
+  const context = await getHouseholdContext(householdId);
+  if (!context) return [];
+
+  const supabase = await createClient();
+  const { data: members } = await supabase.from("split_members").select("user_id").eq("group_id", groupId);
+  const existingIds = new Set((members ?? []).map((m) => m.user_id));
+
+  return context.members
+    .filter((m) => !existingIds.has(m.userId))
+    .map((m) => ({ userId: m.userId, name: m.name, avatarUrl: m.avatarUrl, isCreator: false }));
+}
+
+export async function addSplitGroupMember(groupId: string, userId: string): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("add_split_group_member", { p_group_id: groupId, p_user_id: userId });
+  if (error || !data?.ok) return { error: error?.message ?? "Failed to add member" };
+
+  revalidatePath("/household");
+  return { ok: true };
+}
+
+export async function removeSplitGroupMember(groupId: string, userId: string): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("remove_split_group_member", { p_group_id: groupId, p_user_id: userId });
+  if (error || !data?.ok) return { error: error?.message ?? "Failed to remove member" };
+
+  revalidatePath("/household");
+  return { ok: true };
 }
 
 export interface SplitActivityEntry {
@@ -239,6 +288,14 @@ export async function getSplitSummary(householdId: string): Promise<SplitSummary
   if (!context) return null;
   const groupId = await getDefaultGroupId(householdId);
   if (!groupId) return null;
+
+  // Split group membership is no longer implied by household membership (see
+  // supabase/schema.sql's "Let's Split membership is deliberately NOT
+  // auto-synced" note) — a household member who hasn't been explicitly added
+  // to this group gets null here, same as "not set up", rather than a
+  // misleadingly empty-but-present dashboard.
+  const { data: membership } = await supabase.from("split_members").select("user_id").eq("group_id", groupId).eq("user_id", user.id).maybeSingle();
+  if (!membership) return null;
 
   const [{ data: expenses }, { data: settlements }, splitMembers] = await Promise.all([
     supabase.from("split_expenses").select("*").eq("group_id", groupId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }),

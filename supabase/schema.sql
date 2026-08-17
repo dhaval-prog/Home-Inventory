@@ -406,6 +406,16 @@ create table if not exists public.household_activity (
 );
 create index if not exists household_activity_household_created_idx on public.household_activity (household_id, created_at desc);
 
+-- Scopes an activity row to one specific goal (contribution/goal_created on
+-- a goal vault) so its RLS can be gated by goal membership instead of
+-- household-wide access — see the "Goal Membership" section below. Null for
+-- shared-vault contributions, member_joined, and goal_deleted (once a goal
+-- is gone, its "deleted" announcement is general household news, visible the
+-- same way it always was) — "on delete set null" rather than cascade so a
+-- goal's activity history outlives the goal row itself.
+alter table public.household_activity add column if not exists goal_id uuid references public.household_goals (id) on delete set null;
+create index if not exists household_activity_goal_id_idx on public.household_activity (goal_id);
+
 -- ─────────────────────────────────────────────────────────────
 -- Household RLS helpers — SECURITY DEFINER so a policy on household_members
 -- itself can call is_household_member()/is_household_owner() without
@@ -456,15 +466,16 @@ as $$
 $$;
 
 -- SPLIT_ACCESS vs HOME_ACCESS/SAVINGS_ACCESS (see the permission-scope model
--- in the app spec): a split_only member is a real household_members row (so
--- Let's Split's default-group sync trigger below still adds them to it), but
--- gets none of the household's other visibility — household_goals,
--- household_vaults, household_vault_transactions, household_chat, the full
+-- in the app spec): a split_only member is a real household_members row, but
+-- gets none of the household's other visibility — household_vaults,
+-- household_vault_transactions (shared vault), household_chat, the full
 -- household_members roster, and household_invites all gate on this instead
 -- of the plain is_household_member() they used before. household_activity is
 -- the one exception: split_only members still see expense/settlement rows
 -- there (see household_activity_select_split_activity below), just not
--- goal/contribution ones.
+-- goal/contribution ones. household_goals is gated separately, by goal
+-- membership (is_goal_member below), not by has_home_access at all — see the
+-- "Goal Membership" section that follows.
 create or replace function public.has_home_access(p_household_id uuid)
 returns boolean
 language sql stable security definer set search_path = public
@@ -474,6 +485,71 @@ as $$
     where household_id = p_household_id and user_id = auth.uid() and role != 'split_only'
   );
 $$;
+
+-- ─────────────────────────────────────────────────────────────
+-- Goal Membership — New Goal is its own collaboration space, independent
+-- from Let's Split (split_groups/split_members) and from plain household
+-- membership. Being a household member (even with full HOME_ACCESS) does
+-- NOT by itself grant visibility into a goal — only an explicit
+-- household_goal_members row does, added either automatically for the
+-- goal's own creator (see create_household_goal below) or deliberately via
+-- add_goal_member() ("Invite Members" inside New Goal). This mirrors how
+-- split_members already works for Let's Split, so the two systems stay
+-- structurally symmetric and equally isolated from each other.
+-- ─────────────────────────────────────────────────────────────
+create table if not exists public.household_goal_members (
+  goal_id uuid not null references public.household_goals (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  added_by uuid not null references auth.users (id) on delete cascade,
+  joined_at timestamptz not null default now(),
+  primary key (goal_id, user_id)
+);
+create index if not exists household_goal_members_user_id_idx on public.household_goal_members (user_id);
+alter table public.household_goal_members enable row level security;
+
+create or replace function public.is_goal_member(p_goal_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from household_goal_members
+    where goal_id = p_goal_id and user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_goal_member_check(p_goal_id uuid, p_user_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (select 1 from household_goal_members where goal_id = p_goal_id and user_id = p_user_id);
+$$;
+
+-- The goal's own creator, or the household owner — the same "owner or
+-- creator" gate already used for editing/deleting the goal itself
+-- (household_goals_update_owner_or_creator / _delete_owner_or_creator), now
+-- reused for who may manage its member list.
+create or replace function public.can_manage_goal(p_goal_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from household_goals g
+    where g.id = p_goal_id and (g.created_by = auth.uid() or is_household_owner(g.household_id))
+  );
+$$;
+
+drop policy if exists "household_goal_members_select" on public.household_goal_members;
+create policy "household_goal_members_select" on public.household_goal_members for select
+  using (is_goal_member(goal_id) or can_manage_goal(goal_id));
+-- add_goal_member()/remove_goal_member() below are SECURITY INVOKER and the
+-- real gate (can_manage_goal) — these policies are defense in depth, never a
+-- looser rule than the functions enforce.
+drop policy if exists "household_goal_members_insert_manager" on public.household_goal_members;
+create policy "household_goal_members_insert_manager" on public.household_goal_members for insert
+  with check (can_manage_goal(goal_id) and added_by = auth.uid());
+drop policy if exists "household_goal_members_delete_manager_or_self" on public.household_goal_members;
+create policy "household_goal_members_delete_manager_or_self" on public.household_goal_members for delete
+  using (can_manage_goal(goal_id) or user_id = auth.uid());
 
 -- On creating a household, automatically add the creator as 'owner' and
 -- create the household's single shared vault — never left to client code to
@@ -520,6 +596,8 @@ as $$
 declare
   v_household_id uuid;
   v_vault_name text;
+  v_vault_type text;
+  v_goal_id uuid;
   v_personal_txn_id uuid;
   v_personal_balance numeric;
 begin
@@ -530,12 +608,24 @@ begin
     raise exception 'Invalid contribution source';
   end if;
 
-  select household_id, name into v_household_id, v_vault_name from household_vaults where id = p_vault_id;
+  select household_id, name, vault_type into v_household_id, v_vault_name, v_vault_type from household_vaults where id = p_vault_id;
   if v_household_id is null then
     raise exception 'Vault not found';
   end if;
-  if not can_contribute_to_household(v_household_id) then
-    raise exception 'You do not have permission to contribute to this household';
+
+  -- A goal vault's own membership (household_goal_members) is the gate, not
+  -- household-wide contribute permission — New Goal and Let's Split are
+  -- separate collaboration spaces, and a household member with no goal
+  -- membership must not be able to contribute to (or even see) this goal.
+  if v_vault_type = 'goal' then
+    select id into v_goal_id from household_goals where vault_id = p_vault_id;
+    if not (is_goal_member(v_goal_id) or is_household_owner(v_household_id)) then
+      raise exception 'You are not a member of this goal';
+    end if;
+  else
+    if not can_contribute_to_household(v_household_id) then
+      raise exception 'You do not have permission to contribute to this household';
+    end if;
   end if;
 
   if p_source = 'personal_vault' then
@@ -557,10 +647,11 @@ begin
     (household_id, vault_id, user_id, type, amount, source, source_personal_txn_id, comment)
     values (v_household_id, p_vault_id, auth.uid(), 'add', p_amount, p_source, v_personal_txn_id, p_comment);
 
-  insert into household_activity (household_id, actor_user_id, kind, payload)
+  insert into household_activity (household_id, actor_user_id, kind, payload, goal_id)
     values (
       v_household_id, auth.uid(), 'contribution',
-      jsonb_build_object('vault_id', p_vault_id, 'vault_name', v_vault_name, 'amount', p_amount, 'source', p_source)
+      jsonb_build_object('vault_id', p_vault_id, 'vault_name', v_vault_name, 'amount', p_amount, 'source', p_source),
+      v_goal_id
     );
 
   return jsonb_build_object('ok', true, 'personal_txn_id', v_personal_txn_id);
@@ -600,10 +691,68 @@ begin
     values (p_household_id, v_vault_id, auth.uid(), p_name, coalesce(p_icon, '🎯'), p_target_amount, p_deadline, p_notes)
     returning id into v_goal_id;
 
-  insert into household_activity (household_id, actor_user_id, kind, payload)
-    values (p_household_id, auth.uid(), 'goal_created', jsonb_build_object('goal_id', v_goal_id, 'name', p_name));
+  -- The creator is always this goal's first member — everyone else needs an
+  -- explicit invite (add_goal_member), never automatic household-wide access.
+  insert into household_goal_members (goal_id, user_id, added_by) values (v_goal_id, auth.uid(), auth.uid());
+
+  insert into household_activity (household_id, actor_user_id, kind, payload, goal_id)
+    values (p_household_id, auth.uid(), 'goal_created', jsonb_build_object('goal_id', v_goal_id, 'name', p_name), v_goal_id);
 
   return jsonb_build_object('ok', true, 'goal_id', v_goal_id, 'vault_id', v_vault_id);
+end;
+$$;
+
+-- Adds an existing household member to a specific goal's member list — New
+-- Goal's own "Invite Members" action, deliberately not a token/invite flow:
+-- the invitee is already part of the household, this just grants them
+-- SPLIT_ACCESS-equivalent visibility into one goal, nothing else. Gated to
+-- the goal's creator or the household owner (can_manage_goal), same as
+-- editing/deleting the goal itself.
+create or replace function public.add_goal_member(p_goal_id uuid, p_user_id uuid)
+returns jsonb
+language plpgsql
+security invoker set search_path = public
+as $$
+declare
+  v_household_id uuid;
+begin
+  if not can_manage_goal(p_goal_id) then
+    raise exception 'You do not have permission to manage this goal''s members';
+  end if;
+  select household_id into v_household_id from household_goals where id = p_goal_id;
+  if p_user_id not in (select user_id from household_members where household_id = v_household_id) then
+    raise exception 'That person is not a member of this household';
+  end if;
+
+  insert into household_goal_members (goal_id, user_id, added_by)
+    values (p_goal_id, p_user_id, auth.uid())
+    on conflict (goal_id, user_id) do nothing;
+
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+create or replace function public.remove_goal_member(p_goal_id uuid, p_user_id uuid)
+returns jsonb
+language plpgsql
+security invoker set search_path = public
+as $$
+declare
+  v_goal record;
+begin
+  select * into v_goal from household_goals where id = p_goal_id;
+  if v_goal is null then
+    raise exception 'Goal not found';
+  end if;
+  if not (can_manage_goal(p_goal_id) or p_user_id = auth.uid()) then
+    raise exception 'You do not have permission to remove this member';
+  end if;
+  if p_user_id = v_goal.created_by then
+    raise exception 'The goal creator can''t be removed from their own goal';
+  end if;
+
+  delete from household_goal_members where goal_id = p_goal_id and user_id = p_user_id;
+  return jsonb_build_object('ok', true);
 end;
 $$;
 
@@ -661,6 +810,18 @@ begin
 
   insert into household_members (household_id, user_id, role)
     values (v_invite.household_id, auth.uid(), v_invite.role);
+
+  -- split_only is the one household-level role whose entire purpose is
+  -- Let's Split access, so redeeming that invite adds the new member to the
+  -- household's default split group directly here — plain household
+  -- membership no longer auto-grants split group membership (see the
+  -- removed sync trigger below the Let's Split section), so this is the one
+  -- deliberate exception, scoped to exactly the role built for it.
+  if v_invite.role = 'split_only' then
+    insert into split_members (group_id, user_id)
+      select id, auth.uid() from split_groups where household_id = v_invite.household_id and is_default
+      on conflict do nothing;
+  end if;
 
   update household_invites set status = 'accepted' where id = v_invite.id;
 
@@ -753,9 +914,24 @@ drop policy if exists "household_invites_update_inviter" on public.household_inv
 create policy "household_invites_update_inviter" on public.household_invites for update
   using (can_invite_to_household(household_id)) with check (can_invite_to_household(household_id));
 
+-- household_vaults holds both the household's one 'shared' vault (Household
+-- Savings — HOME_ACCESS-gated, unrelated to this feature) and every goal's
+-- own 'goal' vault (gated by that goal's own membership instead — New Goal
+-- is its own space, isolated from plain household access same as Let's
+-- Split's split_expenses/split_groups are).
 drop policy if exists "household_vaults_select_member" on public.household_vaults;
-create policy "household_vaults_select_member" on public.household_vaults for select
-  using (has_home_access(household_id));
+drop policy if exists "household_vaults_select_shared" on public.household_vaults;
+create policy "household_vaults_select_shared" on public.household_vaults for select
+  using (vault_type = 'shared' and has_home_access(household_id));
+drop policy if exists "household_vaults_select_goal" on public.household_vaults;
+create policy "household_vaults_select_goal" on public.household_vaults for select
+  using (
+    vault_type = 'goal'
+    and exists (
+      select 1 from household_goals g
+      where g.vault_id = household_vaults.id and (is_goal_member(g.id) or is_household_owner(household_vaults.household_id))
+    )
+  );
 drop policy if exists "household_vaults_insert_goal" on public.household_vaults;
 create policy "household_vaults_insert_goal" on public.household_vaults for insert
   with check (vault_type = 'goal' and can_contribute_to_household(household_id) and created_by = auth.uid());
@@ -769,9 +945,14 @@ drop policy if exists "household_vaults_delete_owner_or_creator" on public.house
 create policy "household_vaults_delete_owner_or_creator" on public.household_vaults for delete
   using (is_household_owner(household_id) or created_by = auth.uid());
 
+-- Gated by goal membership, not has_home_access — a household member (even
+-- with full HOME_ACCESS) sees a goal only if they're one of its explicit
+-- household_goal_members, or the household owner (who can always manage
+-- everything). This is what makes "New Goal ✅ / Let's Split ❌" (and the
+-- reverse) actually possible per-person, not just per-role.
 drop policy if exists "household_goals_select_member" on public.household_goals;
 create policy "household_goals_select_member" on public.household_goals for select
-  using (has_home_access(household_id));
+  using (is_goal_member(id) or is_household_owner(household_id));
 drop policy if exists "household_goals_insert_contributor" on public.household_goals;
 create policy "household_goals_insert_contributor" on public.household_goals for insert
   with check (can_contribute_to_household(household_id) and created_by = auth.uid());
@@ -784,16 +965,47 @@ drop policy if exists "household_goals_delete_owner_or_creator" on public.househ
 create policy "household_goals_delete_owner_or_creator" on public.household_goals for delete
   using (is_household_owner(household_id) or created_by = auth.uid());
 
+-- Same shared-vs-goal split as household_vaults above, joined through the
+-- vault_id this transaction belongs to.
 drop policy if exists "household_vault_txns_select_member" on public.household_vault_transactions;
-create policy "household_vault_txns_select_member" on public.household_vault_transactions for select
-  using (has_home_access(household_id));
+drop policy if exists "household_vault_txns_select_shared" on public.household_vault_transactions;
+create policy "household_vault_txns_select_shared" on public.household_vault_transactions for select
+  using (
+    has_home_access(household_id)
+    and exists (select 1 from household_vaults v where v.id = household_vault_transactions.vault_id and v.vault_type = 'shared')
+  );
+drop policy if exists "household_vault_txns_select_goal" on public.household_vault_transactions;
+create policy "household_vault_txns_select_goal" on public.household_vault_transactions for select
+  using (
+    exists (
+      select 1 from household_goals g
+      where g.vault_id = household_vault_transactions.vault_id
+        and (is_goal_member(g.id) or is_household_owner(household_vault_transactions.household_id))
+    )
+  );
 drop policy if exists "household_vault_txns_insert_contributor" on public.household_vault_transactions;
 create policy "household_vault_txns_insert_contributor" on public.household_vault_transactions for insert
-  with check (can_contribute_to_household(household_id) and user_id = auth.uid());
+  with check (
+    user_id = auth.uid()
+    and (
+      (
+        can_contribute_to_household(household_id)
+        and exists (select 1 from household_vaults v where v.id = household_vault_transactions.vault_id and v.vault_type = 'shared')
+      )
+      or exists (
+        select 1 from household_goals g
+        where g.vault_id = household_vault_transactions.vault_id and is_goal_member(g.id)
+      )
+    )
+  );
 
+-- goal_id is null for everything except goal-scoped rows (contribution to a
+-- goal vault, goal_created) — those are gated by goal membership instead,
+-- below, so a household member without that goal's membership never sees
+-- them here even though they otherwise have has_home_access.
 drop policy if exists "household_activity_select_member" on public.household_activity;
 create policy "household_activity_select_member" on public.household_activity for select
-  using (has_home_access(household_id));
+  using (goal_id is null and has_home_access(household_id));
 -- A split_only member doesn't get has_home_access, but still needs to see
 -- expense/settlement activity for their own split group — this additive
 -- policy (OR'd with the one above) opens exactly those kinds, never
@@ -801,6 +1013,13 @@ create policy "household_activity_select_member" on public.household_activity fo
 drop policy if exists "household_activity_select_split_activity" on public.household_activity;
 create policy "household_activity_select_split_activity" on public.household_activity for select
   using (kind in ('expense_added', 'expense_deleted', 'settlement_recorded') and is_household_member(household_id));
+-- Goal-scoped rows (contribution to a goal vault, goal_created) are visible
+-- only to that goal's own members (or the household owner) — never to every
+-- HOME_ACCESS household member, per New Goal's isolation from the rest of
+-- the household.
+drop policy if exists "household_activity_select_goal" on public.household_activity;
+create policy "household_activity_select_goal" on public.household_activity for select
+  using (goal_id is not null and (is_goal_member(goal_id) or is_household_owner(household_id)));
 drop policy if exists "household_activity_insert_member" on public.household_activity;
 create policy "household_activity_insert_member" on public.household_activity for insert
   with check (is_household_member(household_id) and actor_user_id = auth.uid());
@@ -1100,37 +1319,88 @@ begin
 end;
 $$;
 
--- Keeps the default split group's membership mirrored to household_members —
--- join the household, join Household Expenses; leave, and you drop out
--- (your past expenses/settlements stay, only future visibility changes).
-create or replace function public.sync_default_split_group_membership()
-returns trigger
+-- Let's Split membership is deliberately NOT auto-synced from
+-- household_members (there used to be a trigger here that did exactly that
+-- — removed). New Goal and Let's Split are two separate collaboration
+-- spaces: joining the household must never, by itself, grant either one.
+-- Split group membership now only ever comes from the group's own creator
+-- (handle_new_household above) or an explicit add_split_group_member() call
+-- ("Invite Members" inside Let's Split) — except redeem_household_invite()'s
+-- one deliberate exception for the split_only role, which exists
+-- specifically to grant Let's Split access.
+drop trigger if exists household_members_sync_default_split_group on public.household_members;
+drop function if exists public.sync_default_split_group_membership();
+
+-- The split group's own creator, or the household owner — mirrors
+-- can_manage_goal's "owner or creator" gate, now for who may manage a split
+-- group's member list.
+create or replace function public.can_manage_split_group(p_group_id uuid)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select exists (
+    select 1 from split_groups sg
+    where sg.id = p_group_id and (sg.created_by = auth.uid() or is_household_owner(sg.household_id))
+  );
+$$;
+
+drop policy if exists "split_members_insert_manager" on public.split_members;
+create policy "split_members_insert_manager" on public.split_members for insert
+  with check (can_manage_split_group(group_id));
+drop policy if exists "split_members_delete_manager_or_self" on public.split_members;
+create policy "split_members_delete_manager_or_self" on public.split_members for delete
+  using (can_manage_split_group(group_id) or user_id = auth.uid());
+
+-- Adds an existing household member to a specific split group — Let's
+-- Split's own "Invite Members" action. Deliberately not a token/invite flow
+-- (that already exists for bringing in a brand-new person via the
+-- split_only household role/redeem_household_invite): this is for granting
+-- an existing household member visibility into one split group, nothing
+-- else about the household.
+create or replace function public.add_split_group_member(p_group_id uuid, p_user_id uuid)
+returns jsonb
 language plpgsql
-security definer set search_path = public
+security invoker set search_path = public
 as $$
 declare
-  v_group_id uuid;
+  v_household_id uuid;
 begin
-  select id into v_group_id from split_groups
-    where household_id = coalesce(new.household_id, old.household_id) and is_default;
-  if v_group_id is null then
-    return coalesce(new, old);
+  if not can_manage_split_group(p_group_id) then
+    raise exception 'You do not have permission to manage this split group''s members';
+  end if;
+  select household_id into v_household_id from split_groups where id = p_group_id;
+  if v_household_id is null or p_user_id not in (select user_id from household_members where household_id = v_household_id) then
+    raise exception 'That person is not a member of this household';
   end if;
 
-  if TG_OP = 'INSERT' then
-    insert into split_members (group_id, user_id) values (v_group_id, new.user_id) on conflict do nothing;
-  elsif TG_OP = 'DELETE' then
-    delete from split_members where group_id = v_group_id and user_id = old.user_id;
-  end if;
-  return coalesce(new, old);
+  insert into split_members (group_id, user_id) values (p_group_id, p_user_id) on conflict do nothing;
+  return jsonb_build_object('ok', true);
 end;
 $$;
 
-drop trigger if exists household_members_sync_default_split_group on public.household_members;
-create trigger household_members_sync_default_split_group
-  after insert or delete on public.household_members
-  for each row
-  execute function public.sync_default_split_group_membership();
+create or replace function public.remove_split_group_member(p_group_id uuid, p_user_id uuid)
+returns jsonb
+language plpgsql
+security invoker set search_path = public
+as $$
+declare
+  v_group record;
+begin
+  select * into v_group from split_groups where id = p_group_id;
+  if v_group is null then
+    raise exception 'Split group not found';
+  end if;
+  if not (can_manage_split_group(p_group_id) or p_user_id = auth.uid()) then
+    raise exception 'You do not have permission to remove this member';
+  end if;
+  if p_user_id = v_group.created_by then
+    raise exception 'The group creator can''t be removed from their own split group';
+  end if;
+
+  delete from split_members where group_id = p_group_id and user_id = p_user_id;
+  return jsonb_build_object('ok', true);
+end;
+$$;
 
 -- Records an expense and its per-participant split atomically. The split
 -- math (equal/exact/percentage/shares -> owed_amount per participant) is
@@ -1185,6 +1455,16 @@ begin
   end if;
   if abs(v_sum - p_amount) > 0.01 then
     raise exception 'Participant shares (%) do not add up to the expense amount (%)', v_sum, p_amount;
+  end if;
+  -- Every participant must actually belong to this split group — no longer
+  -- implied by household membership (see the removed household-wide sync
+  -- trigger), so this can't be skipped: a manipulated participant list could
+  -- otherwise fabricate debt for someone who was never added to Let's Split.
+  if exists (
+    select 1 from jsonb_array_elements(p_participants) p
+    where not is_split_group_member_check(p_group_id, (p.value->>'user_id')::uuid)
+  ) then
+    raise exception 'Every participant must be a member of this split group';
   end if;
 
   insert into split_expenses (group_id, household_id, created_by, description, amount, category, paid_by, expense_date, comment, split_method)
@@ -1252,6 +1532,12 @@ begin
   end if;
   if abs(v_sum - p_amount) > 0.01 then
     raise exception 'Participant shares (%) do not add up to the expense amount (%)', v_sum, p_amount;
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(p_participants) p
+    where not is_split_group_member_check(v_expense.group_id, (p.value->>'user_id')::uuid)
+  ) then
+    raise exception 'Every participant must be a member of this split group';
   end if;
 
   update split_expenses set
@@ -1404,6 +1690,44 @@ drop policy if exists "split_chat_delete_own" on public.split_chat_messages;
 create policy "split_chat_delete_own" on public.split_chat_messages for delete
   using (user_id = auth.uid() and kind = 'user');
 
+-- ─────────────────────────────────────────────────────────────
+-- Goal Chat — the New Goal mirror of Split Chat: scoped to one specific
+-- goal via is_goal_member(goal_id), completely independent of Split Chat's
+-- is_split_group_member(group_id) and of Home Chat's has_home_access(). A
+-- household member only sees a goal's chat if they're one of that goal's
+-- own household_goal_members — never merged with Split Chat or Home Chat,
+-- per the CORE RULE that these are separate collaboration spaces.
+-- ─────────────────────────────────────────────────────────────
+create table if not exists public.household_goal_chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  goal_id uuid not null references public.household_goals (id) on delete cascade,
+  household_id uuid not null references public.households (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  message text not null,
+  kind text not null default 'user' check (kind in ('user', 'system')),
+  metadata jsonb not null default '{}',
+  edited_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists household_goal_chat_messages_goal_created_idx
+  on public.household_goal_chat_messages (goal_id, created_at desc);
+
+alter table public.household_goal_chat_messages enable row level security;
+
+drop policy if exists "household_goal_chat_select_member" on public.household_goal_chat_messages;
+create policy "household_goal_chat_select_member" on public.household_goal_chat_messages for select
+  using (is_goal_member(goal_id));
+drop policy if exists "household_goal_chat_insert_member" on public.household_goal_chat_messages;
+create policy "household_goal_chat_insert_member" on public.household_goal_chat_messages for insert
+  with check (is_goal_member(goal_id) and user_id = auth.uid());
+drop policy if exists "household_goal_chat_update_own" on public.household_goal_chat_messages;
+create policy "household_goal_chat_update_own" on public.household_goal_chat_messages for update
+  using (user_id = auth.uid() and kind = 'user')
+  with check (user_id = auth.uid());
+drop policy if exists "household_goal_chat_delete_own" on public.household_goal_chat_messages;
+create policy "household_goal_chat_delete_own" on public.household_goal_chat_messages for delete
+  using (user_id = auth.uid() and kind = 'user');
+
 -- Backfill: handle_new_household() only fires for households created AFTER
 -- this migration — every household that already existed needs its default
 -- split group (and membership) created once, here. Safe to re-run: skips
@@ -1425,3 +1749,14 @@ begin
       on conflict do nothing;
   end loop;
 end $$;
+
+-- Backfill: household_goals predating this migration have no
+-- household_goal_members rows yet — without this, goal membership access
+-- (household_goals_select_member etc.) would make every existing goal
+-- invisible to everyone, including its own creator. Grandfathers each
+-- existing goal's creator in as its first member, exactly like
+-- create_household_goal() does for goals created from now on. Safe to
+-- re-run: on conflict do nothing.
+insert into household_goal_members (goal_id, user_id, added_by)
+  select id, created_by, created_by from household_goals
+  on conflict (goal_id, user_id) do nothing;

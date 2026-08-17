@@ -18,6 +18,15 @@ import {
   type HouseholdGoalSummary,
   type HouseholdGoalDetail,
 } from "@/lib/actions/household-goals";
+import {
+  listGoalMembers,
+  listEligibleGoalMembers,
+  addGoalMember,
+  removeGoalMember,
+  type GoalMemberInfo,
+} from "@/lib/actions/household-goal-members";
+import { MemberManagerDialog } from "@/components/household/member-manager-dialog";
+import { GoalChatButton } from "@/components/household/goal-chat-button";
 import type { HouseholdVaultTransactionSource } from "@/lib/supabase/types";
 
 function inr(amount: number): string {
@@ -31,10 +40,19 @@ function inr(amount: number): string {
  * by the server (household owner or the goal's creator) — the icon below only
  * hides itself for everyone else, the real gate lives in delete_household_goal().
  */
-export function GoalCard({ summary, canDelete }: { summary: HouseholdGoalSummary; canDelete: boolean }) {
+export function GoalCard({
+  summary,
+  canDelete,
+  currentUserId,
+}: {
+  summary: HouseholdGoalSummary;
+  canDelete: boolean;
+  currentUserId: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<HouseholdGoalDetail | null>(null);
+  const [members, setMembers] = useState<GoalMemberInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [amount, setAmount] = useState("");
   const [source, setSource] = useState<HouseholdVaultTransactionSource>("personal_vault");
@@ -45,13 +63,18 @@ export function GoalCard({ summary, canDelete }: { summary: HouseholdGoalSummary
   const [deleting, startDeleteTransition] = useTransition();
 
   const { goal, currentAmount, progressPct, creatorName } = summary;
+  // canDelete is computed server-side as owner-or-creator — the same gate as
+  // can_manage_goal() in supabase/schema.sql, so it doubles as "can manage
+  // this goal's member list" without a second server round-trip.
+  const canManageMembers = canDelete;
 
   useEffect(() => {
     if (!open) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    getGoalDetail(goal.id).then((d) => {
+    Promise.all([getGoalDetail(goal.id), listGoalMembers(goal.id)]).then(([d, m]) => {
       setDetail(d);
+      setMembers(m);
       setLoading(false);
     });
   }, [open, goal.id]);
@@ -141,6 +164,36 @@ export function GoalCard({ summary, canDelete }: { summary: HouseholdGoalSummary
                 of {inr(goal.target_amount)} goal — {progressPct}% complete
               </p>
               <Progress value={progressPct} max={100} className="mt-2" />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <GoalChatButton goalId={goal.id} currentUserId={currentUserId} />
+              {canManageMembers && (
+                <MemberManagerDialog
+                  title={`Members of "${goal.name}"`}
+                  members={members}
+                  fetchEligible={() => listEligibleGoalMembers(goal.id, goal.household_id)}
+                  onAdd={(userId) => addGoalMember(goal.id, userId)}
+                  onRemove={(userId) => removeGoalMember(goal.id, userId)}
+                />
+              )}
+            </div>
+
+            <div>
+              <p className="mb-2 text-sm font-medium">Members</p>
+              <ul className="space-y-2">
+                {members.map((m) => (
+                  <li key={m.userId} className="flex items-center gap-2.5 text-sm">
+                    <Avatar size="sm">
+                      <AvatarFallback>{initials(m.name)}</AvatarFallback>
+                    </Avatar>
+                    <span className="min-w-0 flex-1 truncate">
+                      {m.name}
+                      {m.isCreator && <span className="ml-1.5 text-xs text-muted-foreground">(creator)</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
 
             <div className="space-y-3 rounded-xl border p-3">
