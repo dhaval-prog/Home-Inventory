@@ -9,8 +9,6 @@ export const ROOM_FLOOR_COLORS: Record<string, string> = {
   other: "#d3d3ce",
 };
 
-export const ROOM_WALL_COLOR = "#f2ede2";
-
 export function roomFloorColor(type: string): string {
   return ROOM_FLOOR_COLORS[type] ?? ROOM_FLOOR_COLORS.other;
 }

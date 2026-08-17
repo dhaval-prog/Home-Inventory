@@ -4,7 +4,6 @@ import { notFound } from "next/navigation";
 import { Pencil } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { buildLocationIndex, pathForStorageLocation } from "@/lib/location";
-import { getHomeSceneData } from "@/lib/home-scene-data";
 import { getIcon } from "@/lib/icon-map";
 import { categoryIcon, categoryLabel } from "@/lib/constants";
 import { LocationPath } from "@/components/shared/location-path";
@@ -14,7 +13,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ItemToggleButtons } from "@/components/items/item-toggle-buttons";
 import { MoveItemDialog } from "@/components/items/move-item-dialog";
 import { ItemDeleteButton } from "@/components/items/item-delete-button";
-import { ItemLocationScene } from "@/components/three/item-location-scene";
 
 export default async function ItemDetailPage({ params }: { params: Promise<{ itemId: string }> }) {
   const { itemId } = await params;
@@ -31,7 +29,6 @@ export default async function ItemDetailPage({ params }: { params: Promise<{ ite
   const room = path.find((n) => n.type === "room")!;
   const furniture = path.find((n) => n.type === "furniture")!;
   const CategoryIcon = getIcon(categoryIcon(item.category));
-  const sceneData = await getHomeSceneData(supabase, home.id);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-4 md:p-8">
@@ -54,16 +51,6 @@ export default async function ItemDetailPage({ params }: { params: Promise<{ ite
           }
         />
       </div>
-
-      {sceneData && (
-        <ItemLocationScene
-          rooms={sceneData.rooms}
-          furnitureByRoom={sceneData.furnitureByRoom}
-          itemsByFurniture={sceneData.itemsByFurniture}
-          focusRoomId={room.id}
-          highlightFurnitureId={furniture.id}
-        />
-      )}
 
       <Card>
         <CardContent className="p-5">

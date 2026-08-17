@@ -1,48 +1,9 @@
-import type { Furniture, Room } from "@/lib/supabase/types";
+import type { Furniture } from "@/lib/supabase/types";
 import { getCachedFurniturePlacement } from "@/lib/three/furniture-position-cache";
 import { getFurnitureRecipe } from "@/lib/three/furniture-recipes";
 
 export const ROOM_WIDTH = 6.4;
 export const ROOM_DEPTH = 5.2;
-export const ROOM_GAP = 2;
-export const WALL_HEIGHT = 2.3;
-export const WALL_THICKNESS = 0.12;
-
-export interface RoomLayoutItem {
-  room: Room;
-  x: number;
-  z: number;
-  width: number;
-  depth: number;
-}
-
-export function computeRoomLayout(rooms: Room[]): RoomLayoutItem[] {
-  const cols = Math.max(1, Math.ceil(Math.sqrt(rooms.length)));
-  return rooms.map((room, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    return {
-      room,
-      x: col * (ROOM_WIDTH + ROOM_GAP),
-      z: row * (ROOM_DEPTH + ROOM_GAP),
-      width: ROOM_WIDTH,
-      depth: ROOM_DEPTH,
-    };
-  });
-}
-
-export function layoutBounds(layout: RoomLayoutItem[]) {
-  if (layout.length === 0) return { centerX: 0, centerZ: 0, radius: 8 };
-  const minX = Math.min(...layout.map((l) => l.x - l.width / 2));
-  const maxX = Math.max(...layout.map((l) => l.x + l.width / 2));
-  const minZ = Math.min(...layout.map((l) => l.z - l.depth / 2));
-  const maxZ = Math.max(...layout.map((l) => l.z + l.depth / 2));
-  return {
-    centerX: (minX + maxX) / 2,
-    centerZ: (minZ + maxZ) / 2,
-    radius: Math.max(maxX - minX, maxZ - minZ, 8),
-  };
-}
 
 export interface FurnitureSlot {
   x: number;
