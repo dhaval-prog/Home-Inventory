@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -37,23 +38,27 @@ export function HouseholdSwitcher({ households, currentId }: { households: House
           }
         />
         <DropdownMenuContent align="start" className="w-64">
-          <DropdownMenuLabel>Your households</DropdownMenuLabel>
-          {households.map((h) => (
-            <DropdownMenuItem
-              key={h.household.id}
-              className={h.household.id === currentId ? "bg-accent" : undefined}
-              render={
-                <Link href={`/household?id=${h.household.id}`}>
-                  🏠 {h.household.name}
-                  <span className="ml-auto text-xs text-muted-foreground capitalize">{h.role}</span>
-                </Link>
-              }
-            />
-          ))}
+          {/* Menu.GroupLabel (DropdownMenuLabel) requires a Menu.Group ancestor to register its
+              label id — used bare, Base UI throws error #31 the instant the menu opens. */}
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Your households</DropdownMenuLabel>
+            {households.map((h) => (
+              <DropdownMenuItem
+                key={h.household.id}
+                className={h.household.id === currentId ? "bg-accent" : undefined}
+                render={
+                  <Link href={`/household?id=${h.household.id}`}>
+                    🏠 {h.household.name}
+                    <span className="ml-auto text-xs text-muted-foreground capitalize">{h.role}</span>
+                  </Link>
+                }
+              />
+            ))}
+          </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setCreateOpen(true)}>
             <Plus className="size-4" />
-            Create New Household
+            Create Your Own
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setJoinOpen(true)}>
             <Users className="size-4" />

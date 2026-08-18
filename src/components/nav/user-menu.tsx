@@ -6,6 +6,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -25,10 +26,14 @@ export function UserMenu({ name, email }: { name: string; email: string }) {
         </Avatar>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuLabel>
-          <div className="font-medium">{name}</div>
-          <div className="truncate text-xs font-normal text-muted-foreground">{email}</div>
-        </DropdownMenuLabel>
+        {/* Menu.GroupLabel (DropdownMenuLabel) requires a Menu.Group ancestor to register its
+            label id — used bare, Base UI throws error #31 the instant the menu opens. */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>
+            <div className="font-medium">{name}</div>
+            <div className="truncate text-xs font-normal text-muted-foreground">{email}</div>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           render={

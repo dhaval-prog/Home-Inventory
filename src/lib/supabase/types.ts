@@ -118,12 +118,22 @@ export type VaultRecurringPlan = {
 };
 
 /**
- * A member's role within one household — separate from any global app role.
- * Enforced by RLS (is_household_member/is_household_owner/
- * can_contribute_to_household in supabase/schema.sql), never trusted from
- * the client alone.
+ * A member's role within one household — separate from any global app role,
+ * and separate from the caller's role in any OTHER household (see
+ * household_members: one row per household/user pair). Enforced by RLS
+ * (is_household_member/is_household_owner/can_invite_to_household/
+ * can_contribute_to_household/has_home_access in supabase/schema.sql), never
+ * trusted from the client alone. `co_owner` is granted only by the owner
+ * promoting an existing member (updateMemberRole) — it's never a directly
+ * invitable role, see HouseholdInviteRole below. `split_only` is the one role
+ * that gets SPLIT_ACCESS (Let's Split) without HOME_ACCESS/SAVINGS_ACCESS to
+ * the rest of the household — see has_home_access() and
+ * src/components/household/split/split-only-workspace.tsx.
  */
-export type HouseholdRole = "owner" | "member" | "viewer" | "limited_member";
+export type HouseholdRole = "owner" | "co_owner" | "member" | "viewer" | "limited_member" | "split_only";
+
+/** Roles a household invite can grant directly — co_owner is promotion-only, never invited into directly. */
+export type HouseholdInviteRole = "member" | "viewer" | "limited_member" | "split_only";
 
 /** private = owner only, selected = specific members, home = every member. */
 export type HouseholdVisibility = "private" | "selected" | "home";
@@ -152,7 +162,7 @@ export type HouseholdInvite = {
   household_id: string;
   token: string;
   created_by: string;
-  role: Exclude<HouseholdRole, "owner">;
+  role: HouseholdInviteRole;
   status: HouseholdInviteStatus;
   expires_at: string;
   created_at: string;
@@ -219,6 +229,21 @@ export type HouseholdActivity = {
   payload: Record<string, unknown>;
   visibility: HouseholdVisibility;
   created_at: string;
+  /** Scopes this row to one goal (contribution to a goal vault, goal_created) — gated by that goal's own membership in RLS, not household-wide access. Null for shared-vault/member activity. */
+  goal_id: string | null;
+};
+
+/**
+ * New Goal's own membership — independent of Let's Split (split_members) and
+ * of plain household membership. Being a household member does NOT by
+ * itself grant goal visibility; only an explicit row here does (see
+ * is_goal_member()/household_goals_select_member in supabase/schema.sql).
+ */
+export type HouseholdGoalMember = {
+  goal_id: string;
+  user_id: string;
+  added_by: string;
+  joined_at: string;
 };
 
 export type HouseholdChatMessageKind = "user" | "system";
@@ -241,6 +266,146 @@ export type HouseholdChatMessageRead = {
   message_id: string;
   user_id: string;
   seen_at: string;
+};
+
+/**
+ * Let's Split — shared-expense splitting, deliberately separate from
+ * household_vaults/household_goals (savings). A household always has one
+ * default SplitGroup ("Household Expenses"), membership auto-synced to
+ * household_members; the tables also support additional named groups (a
+ * future UI layer), which is why every row still carries a group_id.
+ */
+export type SplitGroup = {
+  id: string;
+  household_id: string;
+  name: string;
+  is_default: boolean;
+  created_by: string;
+  created_at: string;
+};
+
+export type SplitMember = {
+  group_id: string;
+  user_id: string;
+  joined_at: string;
+};
+
+export type SplitGroupInviteStatus = "pending" | "accepted" | "expired" | "revoked";
+
+/**
+ * A secure, link-based invitation scoped to exactly one split group — see
+ * the "Split Group Invites" section in supabase/schema.sql. Deliberately
+ * separate from HouseholdInvite: that grants a household-wide role, this
+ * grants access to one specific split group only, to a brand-new person who
+ * isn't a household member yet (see accept_split_group_invite()).
+ */
+export type SplitGroupInvite = {
+  id: string;
+  group_id: string;
+  household_id: string;
+  invited_by: string;
+  phone_number: string | null;
+  email: string | null;
+  token: string;
+  status: SplitGroupInviteStatus;
+  expires_at: string;
+  accepted_by_user_id: string | null;
+  accepted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SplitShareType = "equal" | "exact" | "percentage" | "shares";
+
+export type SplitExpense = {
+  id: string;
+  group_id: string;
+  household_id: string;
+  created_by: string;
+  description: string;
+  amount: number;
+  category: string | null;
+  paid_by: string;
+  expense_date: string;
+  comment: string | null;
+  receipt_url: string | null;
+  split_method: SplitShareType;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * One participant's share of one expense. owed_amount always sums to the
+ * expense's amount across all participants (enforced server-side in
+ * record_split_expense/update_split_expense) — a participant's net position
+ * is (paid_by === user_id ? amount : 0) - owed_amount.
+ */
+export type SplitExpenseParticipant = {
+  expense_id: string;
+  user_id: string;
+  share_type: SplitShareType;
+  share_value: number | null;
+  owed_amount: number;
+};
+
+export type SplitSettlementMethod = "cash" | "bank_transfer" | "upi" | "other";
+
+/** A record of money that changed hands outside the app — never a payment integration. */
+export type SplitSettlement = {
+  id: string;
+  group_id: string;
+  household_id: string;
+  from_user: string;
+  to_user: string;
+  amount: number;
+  method: SplitSettlementMethod;
+  recorded_by: string;
+  comment: string | null;
+  settled_at: string;
+  created_at: string;
+};
+
+export type SplitChatMessageKind = "user" | "system";
+
+/**
+ * Split Chat — scoped to one split group, not a household. SPLIT_CHAT_ACCESS
+ * (is_split_group_member(group_id) in supabase/schema.sql) is independent of
+ * HOME_CHAT_ACCESS (household_chat_messages/has_home_access): a split_only
+ * member gets this without Home Chat, and a household member only gets a
+ * given group's chat if they actually belong to that group.
+ */
+export type SplitChatMessage = {
+  id: string;
+  group_id: string;
+  household_id: string;
+  user_id: string;
+  message: string;
+  kind: SplitChatMessageKind;
+  /** Rendering hint only — e.g. { type: "suggest_expense", description, amount } — never used to auto-create an expense by itself. */
+  metadata: Record<string, unknown>;
+  edited_at: string | null;
+  created_at: string;
+};
+
+export type HouseholdGoalChatMessageKind = "user" | "system";
+
+/**
+ * Goal Chat — the New Goal mirror of Split Chat: scoped to one goal via
+ * is_goal_member(goal_id), independent of both Split Chat's
+ * is_split_group_member(group_id) and Home Chat's has_home_access(). Never
+ * merged with either — see the CORE RULE in supabase/schema.sql's "Goal
+ * Chat" section.
+ */
+export type HouseholdGoalChatMessage = {
+  id: string;
+  goal_id: string;
+  household_id: string;
+  user_id: string;
+  message: string;
+  kind: HouseholdGoalChatMessageKind;
+  metadata: Record<string, unknown>;
+  edited_at: string | null;
+  created_at: string;
 };
 
 export type Database = {
@@ -312,7 +477,7 @@ export type Database = {
           household_id: string;
           token: string;
           created_by: string;
-          role: Exclude<HouseholdRole, "owner">;
+          role: HouseholdInviteRole;
         };
         Update: Partial<HouseholdInvite>;
         Relationships: [];
@@ -370,6 +535,81 @@ export type Database = {
         Update: Partial<HouseholdChatMessageRead>;
         Relationships: [];
       };
+      split_groups: {
+        Row: SplitGroup;
+        Insert: Partial<SplitGroup> & { household_id: string; name: string; created_by: string };
+        Update: Partial<SplitGroup>;
+        Relationships: [];
+      };
+      split_members: {
+        Row: SplitMember;
+        Insert: Partial<SplitMember> & { group_id: string; user_id: string };
+        Update: Partial<SplitMember>;
+        Relationships: [];
+      };
+      split_group_invites: {
+        Row: SplitGroupInvite;
+        Insert: Partial<SplitGroupInvite> & { group_id: string; household_id: string; invited_by: string; token: string };
+        Update: Partial<SplitGroupInvite>;
+        Relationships: [];
+      };
+      split_expenses: {
+        Row: SplitExpense;
+        Insert: Partial<SplitExpense> & {
+          group_id: string;
+          household_id: string;
+          created_by: string;
+          description: string;
+          amount: number;
+          paid_by: string;
+          split_method: SplitShareType;
+        };
+        Update: Partial<SplitExpense>;
+        Relationships: [];
+      };
+      split_expense_participants: {
+        Row: SplitExpenseParticipant;
+        Insert: Partial<SplitExpenseParticipant> & {
+          expense_id: string;
+          user_id: string;
+          share_type: SplitShareType;
+          owed_amount: number;
+        };
+        Update: Partial<SplitExpenseParticipant>;
+        Relationships: [];
+      };
+      split_settlements: {
+        Row: SplitSettlement;
+        Insert: Partial<SplitSettlement> & {
+          group_id: string;
+          household_id: string;
+          from_user: string;
+          to_user: string;
+          amount: number;
+          method: SplitSettlementMethod;
+          recorded_by: string;
+        };
+        Update: Partial<SplitSettlement>;
+        Relationships: [];
+      };
+      split_chat_messages: {
+        Row: SplitChatMessage;
+        Insert: Partial<SplitChatMessage> & { group_id: string; household_id: string; user_id: string; message: string };
+        Update: Partial<SplitChatMessage>;
+        Relationships: [];
+      };
+      household_goal_members: {
+        Row: HouseholdGoalMember;
+        Insert: Partial<HouseholdGoalMember> & { goal_id: string; user_id: string; added_by: string };
+        Update: Partial<HouseholdGoalMember>;
+        Relationships: [];
+      };
+      household_goal_chat_messages: {
+        Row: HouseholdGoalChatMessage;
+        Insert: Partial<HouseholdGoalChatMessage> & { goal_id: string; household_id: string; user_id: string; message: string };
+        Update: Partial<HouseholdGoalChatMessage>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -388,6 +628,10 @@ export type Database = {
         };
         Returns: { ok: boolean; goal_id: string; vault_id: string };
       };
+      delete_household_goal: {
+        Args: { p_goal_id: string };
+        Returns: { ok: boolean };
+      };
       redeem_household_invite: {
         Args: { p_token: string };
         Returns: { ok: boolean; household_id: string };
@@ -395,6 +639,86 @@ export type Database = {
       mark_household_chat_seen: {
         Args: { p_household_id: string };
         Returns: void;
+      };
+      record_split_expense: {
+        Args: {
+          p_group_id: string;
+          p_description: string;
+          p_amount: number;
+          p_category: string | null;
+          p_expense_date: string | null;
+          p_comment: string | null;
+          p_split_method: SplitShareType;
+          p_participants: { user_id: string; share_type: SplitShareType; share_value: number | null; owed_amount: number }[];
+        };
+        Returns: { ok: boolean; expense_id: string };
+      };
+      update_split_expense: {
+        Args: {
+          p_expense_id: string;
+          p_description: string;
+          p_amount: number;
+          p_category: string | null;
+          p_paid_by: string;
+          p_expense_date: string | null;
+          p_comment: string | null;
+          p_split_method: SplitShareType;
+          p_participants: { user_id: string; share_type: SplitShareType; share_value: number | null; owed_amount: number }[];
+        };
+        Returns: { ok: boolean };
+      };
+      delete_split_expense: {
+        Args: { p_expense_id: string };
+        Returns: { ok: boolean };
+      };
+      add_goal_member: {
+        Args: { p_goal_id: string; p_user_id: string };
+        Returns: { ok: boolean };
+      };
+      remove_goal_member: {
+        Args: { p_goal_id: string; p_user_id: string };
+        Returns: { ok: boolean };
+      };
+      add_split_group_member: {
+        Args: { p_group_id: string; p_user_id: string };
+        Returns: { ok: boolean };
+      };
+      remove_split_group_member: {
+        Args: { p_group_id: string; p_user_id: string };
+        Returns: { ok: boolean };
+      };
+      record_split_settlement: {
+        Args: {
+          p_group_id: string;
+          p_from_user: string;
+          p_to_user: string;
+          p_amount: number;
+          p_method: SplitSettlementMethod;
+          p_comment: string | null;
+        };
+        Returns: { ok: boolean; settlement_id: string };
+      };
+      get_split_invite_preview: {
+        Args: { p_token: string };
+        Returns: {
+          valid: boolean;
+          reason?: "invalid" | "expired" | "revoked" | "already_accepted";
+          group_id?: string;
+          household_id?: string;
+          group_name?: string;
+          household_name?: string;
+          inviter_name?: string;
+          already_member?: boolean;
+        };
+      };
+      accept_split_group_invite: {
+        Args: { p_token: string };
+        Returns: {
+          ok: boolean;
+          reason?: "invalid" | "expired" | "revoked" | "already_accepted" | "already_member";
+          household_id?: string;
+          group_id?: string;
+        };
       };
     };
     Enums: Record<string, never>;

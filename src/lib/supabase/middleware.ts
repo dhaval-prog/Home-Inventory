@@ -2,7 +2,11 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "./types";
 
-const PUBLIC_PATHS = ["/login", "/signup", "/forgot-password", "/auth/callback"];
+// /join/{token} is a Split Group invite link — it must render its own
+// preview (group name, who invited you, Continue/Sign Up/Log In) for
+// visitors who aren't logged in yet, rather than bouncing them to /login
+// before they've seen what they're being invited to (spec §6).
+const PUBLIC_PATHS = ["/login", "/signup", "/forgot-password", "/auth/callback", "/join"];
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });

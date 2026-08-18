@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getHouseholdContext } from "@/lib/actions/household";
 import { listGoals, type HouseholdGoalSummary } from "@/lib/actions/household-goals";
+import { describeActivity } from "@/lib/household-activity-messages";
 
 export interface HouseholdMemberContribution {
   userId: string;
@@ -25,29 +26,6 @@ export interface HouseholdSummary {
   goals: HouseholdGoalSummary[];
   memberContributions: HouseholdMemberContribution[];
   activity: HouseholdActivityEntry[];
-}
-
-/** Turns a raw activity row into a friendly sentence — the household_activity payload is intentionally small (ids/amounts/names), never a member's private financial data. */
-function describeActivity(kind: string, actorName: string, payload: Record<string, unknown>): string {
-  switch (kind) {
-    case "contribution": {
-      const amount = typeof payload.amount === "number" ? payload.amount : 0;
-      const vaultName = typeof payload.vault_name === "string" ? payload.vault_name : "the household vault";
-      return `${actorName} contributed ₹${Math.round(amount).toLocaleString("en-IN")} to ${vaultName}`;
-    }
-    case "goal_created": {
-      const name = typeof payload.name === "string" ? payload.name : "a goal";
-      return `${actorName} created the "${name}" goal`;
-    }
-    case "goal_completed": {
-      const name = typeof payload.name === "string" ? payload.name : "a goal";
-      return `🎉 "${name}" reached its savings target!`;
-    }
-    case "member_joined":
-      return `${actorName} joined the household`;
-    default:
-      return `${actorName} updated the household`;
-  }
 }
 
 /**

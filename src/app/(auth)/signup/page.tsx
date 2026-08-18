@@ -1,14 +1,17 @@
 "use client";
 
-import { useActionState } from "react";
+import { Suspense, useActionState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { signUp, type AuthState } from "@/lib/actions/auth";
 
-export default function SignupPage() {
+function SignupForm() {
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get("redirectTo") ?? "/dashboard";
   const [state, formAction, pending] = useActionState<AuthState, FormData>(signUp, {});
 
   return (
@@ -19,6 +22,7 @@ export default function SignupPage() {
       </CardHeader>
       <CardContent>
         <form action={formAction} className="space-y-4">
+          <input type="hidden" name="redirectTo" value={redirectTo} />
           <div className="space-y-2">
             <Label htmlFor="name">Name</Label>
             <Input id="name" name="name" placeholder="Dhaval" required autoComplete="name" />
@@ -47,11 +51,22 @@ export default function SignupPage() {
         </form>
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Already have an account?{" "}
-          <Link href="/login" className="font-medium text-foreground hover:underline">
+          <Link
+            href={redirectTo !== "/dashboard" ? `/login?redirectTo=${encodeURIComponent(redirectTo)}` : "/login"}
+            className="font-medium text-foreground hover:underline"
+          >
             Log in
           </Link>
         </p>
       </CardContent>
     </Card>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense>
+      <SignupForm />
+    </Suspense>
   );
 }

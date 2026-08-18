@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { displayName } from "@/lib/utils";
 import type { HouseholdGoal, HouseholdGoalStatus, HouseholdVaultTransactionSource } from "@/lib/supabase/types";
 
 export interface HouseholdGoalSummary {
@@ -9,6 +10,8 @@ export interface HouseholdGoalSummary {
   /** Always derived live by summing household_vault_transactions — never trusted from a cached column, mirroring getVaultSummary's approach for the personal vault. */
   currentAmount: number;
   progressPct: number;
+  /** The goal creator's display name — dynamic from their profile (see displayName()), never a hardcoded label, and shown to every household member regardless of who's logged in. */
+  creatorName: string;
 }
 
 export interface GoalContributor {
@@ -48,9 +51,20 @@ export async function listGoals(householdId: string, opts?: { status?: Household
     totalsByVault.set(t.vault_id, (totalsByVault.get(t.vault_id) ?? 0) + delta);
   }
 
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("*")
+    .in("id", Array.from(new Set(goals.map((g) => g.created_by))));
+  const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
+
   return goals.map((goal) => {
     const currentAmount = totalsByVault.get(goal.vault_id) ?? 0;
-    return { goal, currentAmount, progressPct: computeProgress(currentAmount, goal.target_amount) };
+    return {
+      goal,
+      currentAmount,
+      progressPct: computeProgress(currentAmount, goal.target_amount),
+      creatorName: displayName(profileById.get(goal.created_by)),
+    };
   });
 }
 
@@ -71,6 +85,22 @@ export async function createGoal(
 
   revalidatePath("/household");
   return { goalId: data.goal_id };
+}
+
+/**
+ * Deletes a goal along with its dedicated vault and contribution history —
+ * only the household owner or the goal's original creator may do this. The
+ * real gate is delete_household_goal()/RLS server-side (see supabase/schema.sql);
+ * the UI only ever hides the control for everyone else.
+ */
+export async function deleteGoal(goalId: string): Promise<{ ok: true } | { error: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("delete_household_goal", { p_goal_id: goalId });
+  if (error || !data?.ok) return { error: error?.message ?? "Failed to delete goal" };
+
+  revalidatePath("/household");
+  revalidatePath("/vault");
+  return { ok: true };
 }
 
 /** Goal detail with a per-contributor breakdown (amount + percentage of this goal only) — never exposes anyone's private vault balance, only what they've explicitly contributed here. */
@@ -101,13 +131,13 @@ export async function getGoalDetail(goalId: string): Promise<HouseholdGoalDetail
   const { data: profiles } = await supabase
     .from("profiles")
     .select("*")
-    .in("id", Array.from(byUser.keys()));
+    .in("id", Array.from(new Set([...byUser.keys(), goal.created_by])));
   const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
 
   const contributors: GoalContributor[] = Array.from(byUser.entries())
     .map(([userId, v]) => ({
       userId,
-      name: profileById.get(userId)?.name || "Member",
+      name: displayName(profileById.get(userId)),
       avatarUrl: profileById.get(userId)?.avatar_url ?? null,
       amount: v.amount,
       percentage: currentAmount > 0 ? Math.round((v.amount / currentAmount) * 100) : 0,
@@ -116,7 +146,13 @@ export async function getGoalDetail(goalId: string): Promise<HouseholdGoalDetail
     }))
     .sort((a, b) => b.amount - a.amount);
 
-  return { goal, currentAmount, progressPct: computeProgress(currentAmount, goal.target_amount), contributors };
+  return {
+    goal,
+    currentAmount,
+    progressPct: computeProgress(currentAmount, goal.target_amount),
+    creatorName: displayName(profileById.get(goal.created_by)),
+    contributors,
+  };
 }
 
 /**
@@ -158,9 +194,13 @@ export async function contributeToGoal(
     const total = (txns ?? []).reduce((sum, t) => sum + (t.type === "add" ? t.amount : -t.amount), 0);
     if (total >= goal.target_amount) {
       await supabase.from("household_goals").update({ status: "completed" }).eq("id", goalId);
-      await supabase
-        .from("household_activity")
-        .insert({ household_id: goal.household_id, actor_user_id: user.id, kind: "goal_completed", payload: { goal_id: goalId, name: goal.name } });
+      await supabase.from("household_activity").insert({
+        household_id: goal.household_id,
+        actor_user_id: user.id,
+        kind: "goal_completed",
+        payload: { goal_id: goalId, name: goal.name },
+        goal_id: goalId,
+      });
     }
   }
 

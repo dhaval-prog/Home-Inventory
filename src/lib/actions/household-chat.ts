@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { displayName } from "@/lib/utils";
 import { parseTranscript } from "@/lib/voice/nlu";
 import { parseMoneyExpression } from "@/lib/vault/money-parser";
 import { listGoals } from "@/lib/actions/household-goals";
@@ -152,7 +153,7 @@ export async function listHouseholdMessages(householdId: string, limit = 50): Pr
         rows.map((r) => r.id)
       ),
   ]);
-  const nameById = new Map((profiles ?? []).map((p) => [p.id, p.name || "Member"]));
+  const nameById = new Map((profiles ?? []).map((p) => [p.id, displayName(p)]));
 
   const readsByMessage = new Map<string, HouseholdChatMessageRead[]>();
   for (const r of reads ?? []) {
