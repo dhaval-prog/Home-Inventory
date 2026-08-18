@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { BalancesSheet } from "@/components/household/split/balances-sheet";
 import { ExpenseDetailDialog } from "@/components/household/split/expense-detail-dialog";
 import { SplitChatButton } from "@/components/household/split/split-chat-button";
+import { SplitInviteDialog } from "@/components/household/split/split-invite-dialog";
 import { MemberManagerDialog } from "@/components/household/member-manager-dialog";
 import { listEligibleSplitGroupMembers, addSplitGroupMember, removeSplitGroupMember } from "@/lib/actions/split";
 import type { SplitSummary } from "@/lib/actions/split";
@@ -62,6 +63,8 @@ export function SplitDashboard({
         </Button>
         <SplitChatButton householdId={householdId} groupId={summary.groupId} currentUserId={currentUserId} members={members} />
       </div>
+
+      <SplitInviteDialog groupId={summary.groupId} groupName={summary.groupName} canInvite={canManageMembers} />
 
       {canManageMembers && (
         <MemberManagerDialog

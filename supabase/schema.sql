@@ -1760,3 +1760,170 @@ end $$;
 insert into household_goal_members (goal_id, user_id, added_by)
   select id, created_by, created_by from household_goals
   on conflict (goal_id, user_id) do nothing;
+
+-- ─────────────────────────────────────────────────────────────
+-- Split Group Invites — secure, link-based invitations scoped to exactly
+-- one Let's Split group (see the "Let's Split" section above). Deliberately
+-- separate from household_invites: those grant a household role (with
+-- split_only being the one that already scopes to Let's Split, but only via
+-- the household's DEFAULT split group, and only to someone who redeems it
+-- household-wide). This table lets any split group's own manager
+-- (can_manage_split_group — the group's creator, or the household owner)
+-- invite a brand-new person directly into THAT group specifically, via a
+-- single opaque token — no split_group_id/household_id/user_id/financial
+-- data ever appears in the URL itself (see get_split_invite_preview /
+-- accept_split_group_invite below — both SECURITY DEFINER, since whoever
+-- opens the link isn't a member of anything yet, and often isn't even
+-- logged in).
+-- ─────────────────────────────────────────────────────────────
+create table if not exists public.split_group_invites (
+  id uuid primary key default gen_random_uuid(),
+  group_id uuid not null references public.split_groups (id) on delete cascade,
+  household_id uuid not null references public.households (id) on delete cascade,
+  invited_by uuid not null references auth.users (id) on delete cascade,
+  phone_number text,
+  email text,
+  token text not null unique,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'expired', 'revoked')),
+  -- 24h default — a plain column default, not hardcoded in application code,
+  -- so the expiry window can be changed in one place later. Kept in sync
+  -- with INVITE_EXPIRY_HOURS in src/lib/actions/split-invites.ts, which sets
+  -- expires_at explicitly on insert (this default only covers rows inserted
+  -- outside that code path, e.g. ad-hoc SQL).
+  expires_at timestamptz not null default (now() + interval '24 hours'),
+  accepted_by_user_id uuid references auth.users (id) on delete set null,
+  accepted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists split_group_invites_group_id_idx on public.split_group_invites (group_id);
+create index if not exists split_group_invites_token_idx on public.split_group_invites (token);
+create index if not exists split_group_invites_invited_by_created_idx on public.split_group_invites (invited_by, created_at desc);
+
+drop trigger if exists split_group_invites_set_updated_at on public.split_group_invites;
+create trigger split_group_invites_set_updated_at
+  before update on public.split_group_invites
+  for each row
+  execute function public.set_updated_at();
+
+alter table public.split_group_invites enable row level security;
+
+-- Only a split group's own manager (creator, or the household owner — same
+-- gate as add_split_group_member/remove_split_group_member) can see,
+-- create, or revoke that group's invites. Deliberately NOT
+-- is_split_group_member: an ordinary group member (not its manager) must
+-- not be able to mint invites by calling this table directly — this policy
+-- is the real enforcement, never just a hidden button (spec §14).
+drop policy if exists "split_group_invites_select_manager" on public.split_group_invites;
+create policy "split_group_invites_select_manager" on public.split_group_invites for select
+  using (can_manage_split_group(group_id));
+drop policy if exists "split_group_invites_insert_manager" on public.split_group_invites;
+create policy "split_group_invites_insert_manager" on public.split_group_invites for insert
+  with check (can_manage_split_group(group_id) and invited_by = auth.uid());
+-- Covers revoke (status -> 'revoked') and createSplitGroupInvite()'s reuse
+-- path patching phone/email onto an existing pending row. Never lets status
+-- become 'accepted' — only accept_split_group_invite() (SECURITY DEFINER
+-- below) does that, bypassing this policy entirely by design.
+drop policy if exists "split_group_invites_update_manager" on public.split_group_invites;
+create policy "split_group_invites_update_manager" on public.split_group_invites for update
+  using (can_manage_split_group(group_id)) with check (can_manage_split_group(group_id));
+
+-- Safe, minimal, unauthenticated-friendly preview of an invite — the
+-- /join/{token} page calls this before the visitor belongs to anything
+-- (often before they're even logged in), so it can't depend on the RLS
+-- policies above (those require can_manage_split_group). Returns only what
+-- spec §6/§7 allow a not-yet-member to see: which group, whose household,
+-- who invited them — never a balance, an amount, or another member's data.
+create or replace function public.get_split_invite_preview(p_token text)
+returns jsonb
+language plpgsql stable security definer set search_path = public
+as $$
+declare
+  v_invite record;
+  v_group_name text;
+  v_household_name text;
+  v_inviter_name text;
+begin
+  select * into v_invite from split_group_invites where token = p_token;
+  if v_invite is null then
+    return jsonb_build_object('valid', false, 'reason', 'invalid');
+  end if;
+  if v_invite.status = 'revoked' then
+    return jsonb_build_object('valid', false, 'reason', 'revoked');
+  end if;
+  if v_invite.status = 'accepted' then
+    return jsonb_build_object('valid', false, 'reason', 'already_accepted');
+  end if;
+  if v_invite.status != 'pending' or v_invite.expires_at <= now() then
+    return jsonb_build_object('valid', false, 'reason', 'expired');
+  end if;
+
+  select name into v_group_name from split_groups where id = v_invite.group_id;
+  select name into v_household_name from households where id = v_invite.household_id;
+  select coalesce(nullif(name, ''), split_part(email, '@', 1)) into v_inviter_name from profiles where id = v_invite.invited_by;
+
+  return jsonb_build_object(
+    'valid', true,
+    'group_id', v_invite.group_id,
+    'household_id', v_invite.household_id,
+    'group_name', coalesce(v_group_name, 'a split group'),
+    'household_name', coalesce(v_household_name, 'Home Inventory'),
+    'inviter_name', coalesce(v_inviter_name, 'Someone'),
+    'already_member', case when auth.uid() is null then false else is_split_group_member_check(v_invite.group_id, auth.uid()) end
+  );
+end;
+$$;
+
+-- Accepting happens before the caller is necessarily a member of the group
+-- (or even the household), so this runs SECURITY DEFINER, mirroring
+-- redeem_household_invite() above. Grants ONLY this one split group's
+-- access — never the rest of the household — by reusing the existing
+-- split_only role (SPLIT_ACCESS, no HOME_ACCESS — see has_home_access())
+-- for anyone who isn't already a household member, and adding split_members
+-- for this invite's specific group_id — generalizing
+-- redeem_household_invite()'s split_only branch from "the household's
+-- default group only" to "any group."
+create or replace function public.accept_split_group_invite(p_token text)
+returns jsonb
+language plpgsql security definer set search_path = public
+as $$
+declare
+  v_invite record;
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select * into v_invite from split_group_invites where token = p_token for update;
+  if v_invite is null then
+    return jsonb_build_object('ok', false, 'reason', 'invalid');
+  end if;
+  if v_invite.status = 'revoked' then
+    return jsonb_build_object('ok', false, 'reason', 'revoked');
+  end if;
+  if v_invite.status = 'accepted' then
+    return jsonb_build_object('ok', false, 'reason', 'already_accepted');
+  end if;
+  if v_invite.status != 'pending' or v_invite.expires_at <= now() then
+    update split_group_invites set status = 'expired' where id = v_invite.id and status = 'pending';
+    return jsonb_build_object('ok', false, 'reason', 'expired');
+  end if;
+
+  if is_split_group_member_check(v_invite.group_id, auth.uid()) then
+    return jsonb_build_object('ok', false, 'reason', 'already_member', 'household_id', v_invite.household_id, 'group_id', v_invite.group_id);
+  end if;
+
+  if not exists (select 1 from household_members where household_id = v_invite.household_id and user_id = auth.uid()) then
+    insert into household_members (household_id, user_id, role) values (v_invite.household_id, auth.uid(), 'split_only');
+  end if;
+
+  insert into split_members (group_id, user_id) values (v_invite.group_id, auth.uid()) on conflict do nothing;
+
+  update split_group_invites set status = 'accepted', accepted_by_user_id = auth.uid(), accepted_at = now() where id = v_invite.id;
+
+  insert into household_activity (household_id, actor_user_id, kind, payload)
+    values (v_invite.household_id, auth.uid(), 'member_joined', '{}');
+
+  return jsonb_build_object('ok', true, 'household_id', v_invite.household_id, 'group_id', v_invite.group_id);
+end;
+$$;

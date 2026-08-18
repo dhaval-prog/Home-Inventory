@@ -32,6 +32,7 @@ export async function signUp(_prevState: AuthState, formData: FormData): Promise
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const confirmPassword = String(formData.get("confirmPassword") ?? "");
+  const redirectTo = String(formData.get("redirectTo") ?? "/dashboard");
 
   if (!name || !email || !password) {
     return { error: "Please fill in every field." };
@@ -60,7 +61,7 @@ export async function signUp(_prevState: AuthState, formData: FormData): Promise
     };
   }
 
-  redirect("/dashboard");
+  redirect(redirectTo || "/dashboard");
 }
 
 export async function signOut() {

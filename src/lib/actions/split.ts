@@ -45,6 +45,7 @@ export interface SplitExpenseSummary {
 
 export interface SplitSummary {
   groupId: string;
+  groupName: string;
   youOwe: number;
   youAreOwed: number;
   net: number;
@@ -297,10 +298,11 @@ export async function getSplitSummary(householdId: string): Promise<SplitSummary
   const { data: membership } = await supabase.from("split_members").select("user_id").eq("group_id", groupId).eq("user_id", user.id).maybeSingle();
   if (!membership) return null;
 
-  const [{ data: expenses }, { data: settlements }, splitMembers] = await Promise.all([
+  const [{ data: expenses }, { data: settlements }, splitMembers, { data: group }] = await Promise.all([
     supabase.from("split_expenses").select("*").eq("group_id", groupId).order("expense_date", { ascending: false }).order("created_at", { ascending: false }),
     supabase.from("split_settlements").select("*").eq("group_id", groupId),
     getSplitGroupMembers(groupId),
+    supabase.from("split_groups").select("name").eq("id", groupId).maybeSingle(),
   ]);
 
   const expenseRows = expenses ?? [];
@@ -359,6 +361,7 @@ export async function getSplitSummary(householdId: string): Promise<SplitSummary
 
   return {
     groupId,
+    groupName: group?.name ?? "Let's Split",
     youOwe: Math.round(youOwe * 100) / 100,
     youAreOwed: Math.round(youAreOwed * 100) / 100,
     net: Math.round((youAreOwed - youOwe) * 100) / 100,

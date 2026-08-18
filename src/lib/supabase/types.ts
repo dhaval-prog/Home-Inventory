@@ -290,6 +290,31 @@ export type SplitMember = {
   joined_at: string;
 };
 
+export type SplitGroupInviteStatus = "pending" | "accepted" | "expired" | "revoked";
+
+/**
+ * A secure, link-based invitation scoped to exactly one split group — see
+ * the "Split Group Invites" section in supabase/schema.sql. Deliberately
+ * separate from HouseholdInvite: that grants a household-wide role, this
+ * grants access to one specific split group only, to a brand-new person who
+ * isn't a household member yet (see accept_split_group_invite()).
+ */
+export type SplitGroupInvite = {
+  id: string;
+  group_id: string;
+  household_id: string;
+  invited_by: string;
+  phone_number: string | null;
+  email: string | null;
+  token: string;
+  status: SplitGroupInviteStatus;
+  expires_at: string;
+  accepted_by_user_id: string | null;
+  accepted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type SplitShareType = "equal" | "exact" | "percentage" | "shares";
 
 export type SplitExpense = {
@@ -522,6 +547,12 @@ export type Database = {
         Update: Partial<SplitMember>;
         Relationships: [];
       };
+      split_group_invites: {
+        Row: SplitGroupInvite;
+        Insert: Partial<SplitGroupInvite> & { group_id: string; household_id: string; invited_by: string; token: string };
+        Update: Partial<SplitGroupInvite>;
+        Relationships: [];
+      };
       split_expenses: {
         Row: SplitExpense;
         Insert: Partial<SplitExpense> & {
@@ -666,6 +697,28 @@ export type Database = {
           p_comment: string | null;
         };
         Returns: { ok: boolean; settlement_id: string };
+      };
+      get_split_invite_preview: {
+        Args: { p_token: string };
+        Returns: {
+          valid: boolean;
+          reason?: "invalid" | "expired" | "revoked" | "already_accepted";
+          group_id?: string;
+          household_id?: string;
+          group_name?: string;
+          household_name?: string;
+          inviter_name?: string;
+          already_member?: boolean;
+        };
+      };
+      accept_split_group_invite: {
+        Args: { p_token: string };
+        Returns: {
+          ok: boolean;
+          reason?: "invalid" | "expired" | "revoked" | "already_accepted" | "already_member";
+          household_id?: string;
+          group_id?: string;
+        };
       };
     };
     Enums: Record<string, never>;
